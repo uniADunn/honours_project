@@ -16,7 +16,6 @@ print("First 10 rows:")
 print(df.head(10).to_string(index=False))
 print()
 
-#try to sanity-check wavelength range (assume first column is wavelength)
 wl = pd.to_numeric(df.iloc[:,0], errors="coerce")
 print(f"Rows: {len(df)}")
 print(f"Wavelength min/max (nm): {wl.min()} .. {wl.max()}")

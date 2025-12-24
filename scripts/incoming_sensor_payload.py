@@ -14,12 +14,12 @@ load_dotenv()
 
 # MQTT Configuration
 MQTT_HOST = os.getenv('MQTT_HOST', '127.0.0.1')
-MQTT_PORT = os.getenv('MQTT_PORT', 1883)
+MQTT_PORT = int(os.getenv('MQTT_PORT', 1883))
 MQTT_TOPIC = os.getenv('MQTT_TOPIC')
 
 # MySQL Configuration
 MYSQL_HOST = os.getenv('MYSQL_HOST', '127.0.0.1')
-MYSQL_PORT = os.getenv('MYSQL_PORT',3306)
+MYSQL_PORT = int(os.getenv('MYSQL_PORT','3306'))
 MYSQL_DB = os.getenv('MYSQL_DB','crop_lighting')
 
 MYSQL_USER = os.getenv('MYSQL_USER', 'root')

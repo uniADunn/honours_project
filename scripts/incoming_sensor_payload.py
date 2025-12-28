@@ -12,6 +12,33 @@ import paho.mqtt.client as mqtt_client
 # Load environment variables from .env file
 load_dotenv()
 
+# DATASHEET REFERENCE IRRADIANCE: Ee = 107.67µW/cm² / 100 = 1.0767 W/m²
+E_REF_W_M2 = 107.67 / 100
+print(f"[config] reference irradiance E_ref = {E_REF_W_M2} W/m^2/nm")
+
+C_REF = {
+    415: 55,
+    445: 110,
+    480: 210,
+    515: 390,
+    555: 590,
+    590: 840,
+    630: 1350,
+    680: 1070
+}
+
+def wm2_from_counts_ref(counts:int | None, wl_nm: int):
+    if counts is None:
+        return None
+    c_ref = C_REF.get(wl_nm)
+    if c_ref is None or c_ref <= 0:
+        return None
+    return float(counts) * (E_REF_W_M2 / float(c_ref))
+
+def safe_sum(*xs):
+    vals = [v for v in xs if v is not None]
+    return sum(vals) if vals else None
+
 # MQTT Configuration
 MQTT_HOST = os.getenv('MQTT_HOST', '127.0.0.1')
 MQTT_PORT = int(os.getenv('MQTT_PORT', 1883))
@@ -63,19 +90,23 @@ INSERT_SQL = f"""
 INSERT INTO {TABLE}(
     ts, source, zone,
     as7341_dev_id, bh1750_dev_id,
+    as7341_gain, as7341_atime, as7341_astep, as7341_it_ms,
     bh1750_lux,
     as7341_415nm, as7341_445nm, as7341_480nm,
     as7341_515nm, as7341_555nm, as7341_590nm,
     as7341_630nm, as7341_680nm,
-    as7341_clear, as7341_nir
+    as7341_clear, as7341_nir,
+    blue_W_m2, green_W_m2, red_W_m2
 ) VALUES(
     %(ts)s, %(source)s, %(zone)s,
     %(as7341_dev_id)s, %(bh1750_dev_id)s,
+    %(as7341_gain)s, %(as7341_atime)s, %(as7341_astep)s, %(as7341_it_ms)s,
     %(bh1750_lux)s,
     %(as7341_415nm)s, %(as7341_445nm)s, %(as7341_480nm)s,
     %(as7341_515nm)s, %(as7341_555nm)s, %(as7341_590nm)s,
     %(as7341_630nm)s, %(as7341_680nm)s,
-    %(as7341_clear)s, %(as7341_nir)s
+    %(as7341_clear)s, %(as7341_nir)s,
+    %(blue_W_m2)s, %(green_W_m2)s, %(red_W_m2)s
     );
     """
 
@@ -106,6 +137,18 @@ def on_message(client, userdata, msg):
         print(f"[mqtt] missing required fields in payload: ts= {ts_in!r}, source= {source!r}, zone= {zone!r}")
         return
     
+    #calculate irradiance values
+    w415 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_415nm")), 415)
+    w445 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_445nm")), 445)
+    w480 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_480nm")), 480)
+
+    w515 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_515nm")), 515)
+    w555 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_555nm")), 555)
+    w590 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_590nm")), 590)
+
+    w630 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_630nm")), 630)
+    w680 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_680nm")), 680)
+    
     row = {
         "ts": ts_mysql,
         "source": str(source),
@@ -114,6 +157,11 @@ def on_message(client, userdata, msg):
         "as7341_dev_id": data.get("as7341_dev_id"),
         "bh1750_dev_id": data.get("bh1750_dev_id"),
 
+        "as7341_gain": as_float_or_none(data.get("as7341_gain")),
+        "as7341_atime":as_int_or_none(data.get("as7341_atime")),
+        "as7341_astep": as_int_or_none(data.get("as7341_astep")),
+        "as7341_it_ms": as_float_or_none(data.get("as7341_it_ms")),
+        
         "bh1750_lux": as_float_or_none(data.get("bh1750_lux")),
 
         "as7341_415nm": as_int_or_none(data.get("as7341_415nm")),
@@ -126,6 +174,9 @@ def on_message(client, userdata, msg):
         "as7341_680nm": as_int_or_none(data.get("as7341_680nm")),
         "as7341_clear": as_int_or_none(data.get("as7341_clear")),
         "as7341_nir": as_int_or_none(data.get("as7341_nir")),
+        "blue_W_m2": safe_sum(w415, w445, w480),
+        "green_W_m2": safe_sum(w515, w555, w590),
+        "red_W_m2": safe_sum(w630, w680),
 
     }
 

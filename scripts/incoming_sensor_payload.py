@@ -12,10 +12,10 @@ import paho.mqtt.client as mqtt_client
 # Load environment variables from .env file
 load_dotenv()
 
-# DATASHEET REFERENCE IRRADIANCE: Ee = 107.67µW/cm² / 100 = 1.0767 W/m²
-E_REF_W_M2 = 107.67 / 100
+# DATASHEET REFERENCE IRRADIANCE: Ee = (107.67µW/cm² / 100)= 1.0767 W/m²
+E_REF_W_M2 = 107.67 / 100 # 1.0767
 print(f"[config] reference irradiance E_ref = {E_REF_W_M2} W/m^2/nm")
-
+# DATASHEET REFERENCE COUNTS again=64, atime = 2.78ms (2700k warm white LED)
 C_REF = {
     415: 55,
     445: 110,
@@ -174,6 +174,7 @@ def on_message(client, userdata, msg):
         "as7341_680nm": as_int_or_none(data.get("as7341_680nm")),
         "as7341_clear": as_int_or_none(data.get("as7341_clear")),
         "as7341_nir": as_int_or_none(data.get("as7341_nir")),
+
         "blue_W_m2": safe_sum(w415, w445, w480),
         "green_W_m2": safe_sum(w515, w555, w590),
         "red_W_m2": safe_sum(w630, w680),

@@ -88,7 +88,7 @@ def db_connect():
 
 INSERT_SQL = f"""
 INSERT INTO {TABLE}(
-    ts, source, zone,
+    ts, source, zone, run_id, run_seq,
     as7341_dev_id, bh1750_dev_id,
     as7341_gain, as7341_atime, as7341_astep, as7341_it_ms,
     bh1750_lux,
@@ -98,7 +98,7 @@ INSERT INTO {TABLE}(
     as7341_clear, as7341_nir,
     blue_W_m2, green_W_m2, red_W_m2
 ) VALUES(
-    %(ts)s, %(source)s, %(zone)s,
+    %(ts)s, %(source)s, %(zone)s, %(run_id)s, %(run_seq)s,
     %(as7341_dev_id)s, %(bh1750_dev_id)s,
     %(as7341_gain)s, %(as7341_atime)s, %(as7341_astep)s, %(as7341_it_ms)s,
     %(bh1750_lux)s,
@@ -148,12 +148,17 @@ def on_message(client, userdata, msg):
 
     w630 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_630nm")), 630)
     w680 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_680nm")), 680)
+
+    run_id = str(data.get("run_id"))
+    if run_id is None:
+        return
     
     row = {
         "ts": ts_mysql,
         "source": str(source),
         "zone": str(zone),
-
+        "run_id": str(data.get("run_id")),
+        "run_seq": as_int_or_none(data.get("run_seq")),
         "as7341_dev_id": data.get("as7341_dev_id"),
         "bh1750_dev_id": data.get("bh1750_dev_id"),
 

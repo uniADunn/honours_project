@@ -18,7 +18,7 @@ CMD_TOPIC = "adunn/control/zone1/cmd"
 ACK_TOPIC = "adunn/control/zone1/ack"
 
 SOURCE = "pi-01"
-ZONE = "zone1"
+ZONE = "ZONE1"
 AS7341_DEV_ID = "as7341_01"
 BH1750_DEV_ID = "bh1750_01"
 
@@ -259,7 +259,7 @@ def main():
                 "status": "OK",
                 "detail": "shutting down"
             })
-            print(f"[RUN] Shutdown requested for run_id: {manager.run_id}")
+            print(f"[RUN] Shutdown requested for run_id: {stopped_run}")
         else:
             print(f"[CMD] unknown command type: {cmd}")
 

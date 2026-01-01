@@ -79,7 +79,7 @@ class PiManager:
         else:
             return True, "OK (both sensors initialized)"
         
-    def build_payload(self, seq: int) -> str:
+    def build_payload(self) -> str:
         #BH1750 lux
         if self.lux is None:
             bh1750_lux = None
@@ -135,7 +135,6 @@ class PiManager:
             "source": SOURCE,
             "zone": ZONE,
             "run_id": self.run_id,
-            "run_seq": self.seq,
 
             "as7341_dev_id": AS7341_DEV_ID,
             "bh1750_dev_id": BH1750_DEV_ID,
@@ -160,7 +159,7 @@ class PiManager:
             "as7341_clear": as7341_clear,
             "as7341_nir": as7341_nir,
 
-            "seq": seq
+            "run_seq": self.seq
         }
         return json.dumps(payload)
     
@@ -249,9 +248,12 @@ def main():
                 return
             manager.run_active = False
             manager.shutdown_requested = True
+            stopped_run = manager.run_id
+            manager.run_id = None
+            manager.seq = 0
             manager.ack(client, {
                 "type": "EXITING",
-                "run_id": manager.run_id,
+                "run_id": stopped_run,
                 "source": SOURCE,
                 "zone": ZONE,
                 "status": "OK",
@@ -270,7 +272,7 @@ def main():
     try:
         while not manager.shutdown_requested:
             if manager.run_active:
-                payload = manager.build_payload(manager.seq)
+                payload = manager.build_payload()
                 info = client.publish(DATA_TOPIC, payload, qos=1, retain=False)
                 info.wait_for_publish()
                 manager.seq += 1

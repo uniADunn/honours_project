@@ -41,8 +41,10 @@ class PiManager:
         self.spec = None
 
         self.run_active = False
+        self.shutdown_requested = False
         self.run_id = None
         self.sample_interval_s = 5
+        self.seq = 0
 
     def init_sensors(self) -> tuple[bool, str]:
         try:
@@ -133,6 +135,7 @@ class PiManager:
             "source": SOURCE,
             "zone": ZONE,
             "run_id": self.run_id,
+            "run_seq": self.seq,
 
             "as7341_dev_id": AS7341_DEV_ID,
             "bh1750_dev_id": BH1750_DEV_ID,
@@ -204,7 +207,7 @@ def main():
                     "detail": detail
                 })
                 return
-            
+            manager.seq = 0
             manager.run_active = True
             manager.ack(client, {
                 "type": "READY",
@@ -230,8 +233,31 @@ def main():
             manager.run_active = False
             stopped_run = manager.run_id
             manager.run_id = None
+            manager.seq = 0
             manager.ack(client, {"type": "STOPPED", "run_id": stopped_run, "source": SOURCE, "zone": ZONE, "status": "OK"})
             print(f"[RUN] Stopped run_id: {stopped_run}")
+        elif ctype == "EXIT":
+            if run_id and manager.run_id and str(run_id) != manager.run_id:
+                manager.ack(client, {
+                    "type": "EXITING",
+                    "run_id": manager.run_id,
+                    "source": SOURCE,
+                    "zone": ZONE,
+                    "status": "ERROR",
+                    "detail": f"run_id mismatch: received {run_id}, current {manager.run_id}",
+                })
+                return
+            manager.run_active = False
+            manager.shutdown_requested = True
+            manager.ack(client, {
+                "type": "EXITING",
+                "run_id": manager.run_id,
+                "source": SOURCE,
+                "zone": ZONE,
+                "status": "OK",
+                "detail": "shutting down"
+            })
+            print(f"[RUN] Shutdown requested for run_id: {manager.run_id}")
         else:
             print(f"[CMD] unknown command type: {cmd}")
 
@@ -242,19 +268,23 @@ def main():
     client.loop_start()
 
     try:
-        seq = 0
-        while True:
+        while not manager.shutdown_requested:
             if manager.run_active:
-                payload = manager.build_payload(seq)
+                payload = manager.build_payload(manager.seq)
                 info = client.publish(DATA_TOPIC, payload, qos=1, retain=False)
                 info.wait_for_publish()
-                seq += 1
+                manager.seq += 1
                 time.sleep(manager.sample_interval_s)
             else:
                 time.sleep(0.2) # idle wait
+    except KeyboardInterrupt:
+        print("\n[RUN] User Exit requested. shutting down...")
+        manager.run_active = False
+        manager.shutdown_requested = True
     finally:
         client.loop_stop()
         client.disconnect()
+        print("[RUN] Disconnected - exit complete.")
 
 if __name__ == "__main__":
     main()    

@@ -31,8 +31,8 @@ AS7341_ASTEP = 9999
 def utc_time_now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
-def calculate_integration_time_ms(atime: int, astep: int)->int:
-    return int((atime+1)*(astep+1)*2.78)/1000
+def calculate_integration_time_ms(atime: int, astep: int)->float:
+    return ((atime+1)*(astep+1)*2.78)/1000
 
 class PiManager:
     def __init__(self):
@@ -71,11 +71,11 @@ class PiManager:
         if self.lux is None and self.spec is None:
             return False, "No sensors initialized"
         elif self.lux is None and self.spec is not None:
-            print("AS7341 initialized, BH1750 not connected")
+            return True, "OK (AS7341 initialized, BH1750 not connected)"
         elif self.lux is not None and self.spec is None:
-            print("BH1750 initialized, AS7341 not connected")
+            return True, "OK (BH1750 initialized, AS7341 not connected)"
         else:
-            return True, "OK"
+            return True, "OK (both sensors initialized)"
         
     def build_payload(self, seq: int) -> str:
         #BH1750 lux
@@ -124,41 +124,41 @@ class PiManager:
                 as7341_clear = None
                 as7341_nir = None
             
-            #calculate integration time for as7341
-            as7341_it_ms = calculate_integration_time_ms(AS7341_ATIME, AS7341_ASTEP)
+        #calculate integration time for as7341
+        as7341_it_ms = calculate_integration_time_ms(AS7341_ATIME, AS7341_ASTEP)
 
-            #Build payload
-            payload = {
-                "ts": utc_time_now_iso(),
-                "source": SOURCE,
-                "zone": ZONE,
-                "run_id": self.run_id,
+        #Build payload
+        payload = {
+            "ts": utc_time_now_iso(),
+            "source": SOURCE,
+            "zone": ZONE,
+            "run_id": self.run_id,
 
-                "as7341_dev_id": AS7341_DEV_ID,
-                "bh1750_dev_id": BH1750_DEV_ID,
+            "as7341_dev_id": AS7341_DEV_ID,
+            "bh1750_dev_id": BH1750_DEV_ID,
 
-                #MEASUREMENT CONFIGURATION
-                "as7341_gain": AS7341_GAIN,
-                "as7341_atime": AS7341_ATIME,
-                "as7341_astep": AS7341_ASTEP,
-                "as7341_it_ms": as7341_it_ms,
+            #MEASUREMENT CONFIGURATION
+            "as7341_gain": AS7341_GAIN,
+            "as7341_atime": AS7341_ATIME,
+            "as7341_astep": AS7341_ASTEP,
+            "as7341_it_ms": as7341_it_ms,
 
-                #BH1750
-                "bh1750_lux": bh1750_lux,
-                #AS7341 (raw counts)
-                "as7341_415nm": as7341_415nm,
-                "as7341_445nm": as7341_445nm,
-                "as7341_480nm": as7341_480nm,
-                "as7341_515nm": as7341_515nm,
-                "as7341_555nm": as7341_555nm,
-                "as7341_590nm": as7341_590nm,
-                "as7341_630nm": as7341_630nm,
-                "as7341_680nm": as7341_680nm,
-                "as7341_clear": as7341_clear,
-                "as7341_nir": as7341_nir,
+            #BH1750
+            "bh1750_lux": bh1750_lux,
+            #AS7341 (raw counts)
+            "as7341_415nm": as7341_415nm,
+            "as7341_445nm": as7341_445nm,
+            "as7341_480nm": as7341_480nm,
+            "as7341_515nm": as7341_515nm,
+            "as7341_555nm": as7341_555nm,
+            "as7341_590nm": as7341_590nm,
+            "as7341_630nm": as7341_630nm,
+            "as7341_680nm": as7341_680nm,
+            "as7341_clear": as7341_clear,
+            "as7341_nir": as7341_nir,
 
-                "seq": seq
-            }
+            "seq": seq
+        }
         return json.dumps(payload)
     
     def ack(self, client: mqtt.Client, msg: dict):
@@ -168,7 +168,7 @@ def main():
     manager = PiManager()
     client = mqtt.Client(client_id="pi-manager_zone1")
 
-    def on_connect(client, userdata, msg, reason_code, properties=None):
+    def on_connect(client, userdata, flags, reason_code, properties=None):
         print(f"[MQTT] Connected with reason_code: {reason_code}")
         client.subscribe(CMD_TOPIC)
         print(f"[MQTT] Subscribed to topic: {CMD_TOPIC}")
@@ -212,6 +212,7 @@ def main():
                 "source": SOURCE,
                 "zone": ZONE,
                 "status": "OK",
+                "detail": detail
             })
             print(f"[RUN] Started run_id: {manager.run_id}, sample interval: {manager.sample_interval_s}s")
 

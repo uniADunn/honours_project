@@ -14,8 +14,10 @@ load_dotenv()
 
 # DATASHEET REFERENCE IRRADIANCE: Ee = (107.67µW/cm² / 100)= 1.0767 W/m²
 E_REF_W_M2 = 107.67 / 100 # 1.0767
-print(f"[config] reference irradiance E_ref = {E_REF_W_M2} W/m^2/nm")
+print(f"[config] reference irradiance E_ref = {E_REF_W_M2} W/m2")
 # DATASHEET REFERENCE COUNTS again=64, atime = 2.78ms (2700k warm white LED)
+GAIN_REF = 64.0
+IT_REF_MS = 27.8
 C_REF = {
     415: 55,
     445: 110,
@@ -27,13 +29,26 @@ C_REF = {
     680: 1070
 }
 
-def wm2_from_counts_ref(counts:int | None, wl_nm: int):
+def wm2_from_counts_ref(counts:int | None, wl_nm: int, gain_meas: float| None, it_meas_ms: float | None):
+    """
+    Convert as7341 counts to an irradiance proxy (W/m2) using datasheet reference counts.
+    applies normilization for gain and integration time so the result stays comparable if settings change.
+    """
     if counts is None:
         return None
+    
     c_ref = C_REF.get(wl_nm)
-    if c_ref is None or c_ref <= 0:
+    if not c_ref:
         return None
-    return float(counts) * (E_REF_W_M2 / float(c_ref))
+    
+    # if metadata is missing, fall back to assume reference settings
+    if not gain_meas or gain_meas <= 0:
+        gain_meas = GAIN_REF
+    if not it_meas_ms or it_meas_ms <=0:
+        it_meas_ms = IT_REF_MS
+
+    norm = (GAIN_REF / float(gain_meas)) * (IT_REF_MS / float(it_meas_ms))
+    return float(counts) * (E_REF_W_M2 / float(c_ref)) * norm
 
 def safe_sum(*xs):
     vals = [v for v in xs if v is not None]
@@ -137,27 +152,31 @@ def on_message(client, userdata, msg):
         print(f"[mqtt] missing required fields in payload: ts= {ts_in!r}, source= {source!r}, zone= {zone!r}")
         return
     
+    gain_meas = as_float_or_none(data.get("as7341_gain"))
+    it_meas_ms = as_float_or_none(data.get("as7341_it_ms"))
+    
     #calculate irradiance values
-    w415 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_415nm")), 415)
-    w445 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_445nm")), 445)
-    w480 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_480nm")), 480)
+    w415 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_415nm")), 415, gain_meas, it_meas_ms)
+    w445 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_445nm")), 445, gain_meas, it_meas_ms)
+    w480 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_480nm")), 480, gain_meas, it_meas_ms)
 
-    w515 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_515nm")), 515)
-    w555 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_555nm")), 555)
-    w590 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_590nm")), 590)
+    w515 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_515nm")), 515,  gain_meas, it_meas_ms)
+    w555 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_555nm")), 555,  gain_meas, it_meas_ms)
+    w590 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_590nm")), 590,  gain_meas, it_meas_ms)
 
-    w630 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_630nm")), 630)
-    w680 = wm2_from_counts_ref(as_float_or_none(data.get("as7341_680nm")), 680)
+    w630 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_630nm")), 630,  gain_meas, it_meas_ms)
+    w680 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_680nm")), 680,  gain_meas, it_meas_ms)
 
-    run_id = str(data.get("run_id"))
+    run_id = data.get("run_id")
     if run_id is None:
         return
+    run_id = str(run_id)
     
     row = {
         "ts": ts_mysql,
         "source": str(source),
         "zone": str(zone),
-        "run_id": str(data.get("run_id")),
+        "run_id": run_id,
         "run_seq": as_int_or_none(data.get("run_seq")),
         "as7341_dev_id": data.get("as7341_dev_id"),
         "bh1750_dev_id": data.get("bh1750_dev_id"),

@@ -7,6 +7,8 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 LOG_DIR="$PROJECT_DIR/logs"
 LOG_FILE="$LOG_DIR/incoming_sensor_payload.log"
 
+trap 'echo "[$(date -Is)] Supervisor received Ctrl+C; exiting." | tee -a "$LOG_FILE"; exit 0' INT
+
 mkdir -p "$LOG_DIR"
 
 PYTHON="$PROJECT_DIR/.venv/Scripts/python.exe"
@@ -19,10 +21,12 @@ echo "[$(date -Is)] PYTHON=$PYTHON" | tee -a "$LOG_FILE"
 echo "[$(date -Is)] INGEST_SCRIPT=$INGEST_SCRIPT" | tee -a "$LOG_FILE"
 
 while true; do
-    echo "[$(date -Is)] Launching ingestion..." | tee -a "$LOG_FILE"
-    cd "$PROJECT_DIR"
-    "$PYTHON" -u "$INGEST_SCRIPT" >> "$LOG_FILE" 2>&1
-    EC=$?
-    echo "[$(date -Is)] Ingestion exited with code $EC. Restarting in 3..." | tee -a "$LOG_FILE"
-    sleep 3
+  echo "[$(date -Is)] Launching ingestion..." | tee -a "$LOG_FILE"
+  cd "$PROJECT_DIR"
+
+  "$PYTHON" -u "$INGEST_SCRIPT" >> "$LOG_FILE" 2>&1
+  EC=$?
+
+  echo "[$(date -Is)] Ingestion exited with code $EC. Restarting in 3..." | tee -a "$LOG_FILE"
+  sleep 3
 done

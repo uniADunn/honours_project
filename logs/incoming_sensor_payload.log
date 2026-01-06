@@ -98,3 +98,17 @@
 
 [run] stopping mqtt client loop (keyboard interupt) ...
 [2026-01-06T19:19:42+00:00] Supervisor received Ctrl+C; exiting.
+[2026-01-06T19:30:30+00:00] Supervisor starting...
+[2026-01-06T19:30:30+00:00] PROJECT_DIR=/c/Users/ad731/Desktop/crop_lighting/honours_project
+[2026-01-06T19:30:30+00:00] SCRIPT_DIR=/c/Users/ad731/Desktop/crop_lighting/honours_project/scripts/backend-scripts
+[2026-01-06T19:30:30+00:00] PYTHON=/c/Users/ad731/Desktop/crop_lighting/honours_project/.venv/Scripts/python.exe
+[2026-01-06T19:30:30+00:00] INGEST_SCRIPT=/c/Users/ad731/Desktop/crop_lighting/honours_project/scripts/backend-scripts/incoming_sensor_payload.py
+[2026-01-06T19:30:31+00:00] Launching ingestion...
+[config] reference irradiance E_ref = 1.0767 W/m2
+[db] connected to database
+[run] starting mqtt client loop... ctrl+c to stop
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+
+[run] stopping mqtt client loop (keyboard interupt) ...
+[2026-01-06T19:31:58+00:00] Supervisor received Ctrl+C; exiting.

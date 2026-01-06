@@ -237,7 +237,10 @@ def main():
         print(f"[db] connectionn failed: {e}")
         sys.exit(1)
     
-    client = mqtt_client.Client(client_id="backend_sensor_data_process")
+    client = mqtt_client.Client(
+        client_id="backend_sensor_data_process",
+        callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2
+        )
     client.on_connect = on_connect
     client.on_message = on_message
 

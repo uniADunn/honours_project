@@ -145,8 +145,22 @@ def on_message(client, userdata, msg):
     source = data.get('source')
     zone = data.get('zone')
 
+    if not ts_in or source is None or zone is None:
+        print(f"[MQTT] Missing required fields in payload: ts = {ts_in!r}, source = {source!r}, zone = {zone!r}" )
+        return
+
     #convert iso timestamp to mysql datetime format
-    ts_mysql = datetime.fromisoformat(ts_in.strip("Z").replace("T", " "))
+    #ts_mysql = datetime.fromisoformat(ts_in.strip("Z").replace("T", " "))
+    try:
+        ts_in = (ts_in or "").strip()
+        if ts_in.endswith("Z"):
+            ts_in = ts_in.replace("Z", "+00:00")
+
+        ts_dt = datetime.fromisoformat(ts_in) #aware datetime if offset present
+        ts_mysql = ts_dt.replace(tzinfo=None) #store as naive UTC for MySQL DATETIME
+    except Exception as e:
+        print(f"[MQTT] invalid ts format: ts={ts_in!r} error={e}")
+        return
 
     if ts_mysql is None or source is None or zone is None:
         print(f"[mqtt] missing required fields in payload: ts= {ts_in!r}, source= {source!r}, zone= {zone!r}")
@@ -170,7 +184,9 @@ def on_message(client, userdata, msg):
     run_id = data.get("run_id")
     if run_id is None:
         return
-    run_id = str(run_id)
+    run_id = str(run_id).strip()
+    if run_id == "" or run_id.lower() == "none":
+        return
     
     row = {
         "ts": ts_mysql,

@@ -257,7 +257,9 @@ def main():
     try:
         client.loop_forever()
     except KeyboardInterrupt:
-        print("\n[run] stopping mqtt client loop ...")
+        print("\n[run] stopping mqtt client loop (keyboard interupt) ...")
+    except Exception as e:
+        print(f"\n[run] stopping mqtt client loop (Exception): {e!r}")
     finally:
         try:
             client.disconnect()

@@ -22,6 +22,7 @@ while true; do
     echo "[$(date -Is)] Launching ingestion..." | tee -a "$LOG_FILE"
     cd "$PROJECT_DIR"
     "$PYTHON" -u "$INGEST_SCRIPT" >> "$LOG_FILE" 2>&1
-    echo "[$(date -Is)] Ingestion exited. Restarting in 3..." | tee -a "$LOG_FILE"
+    EC=$?
+    echo "[$(date -Is)] Ingestion exited with code $EC. Restarting in 3..." | tee -a "$LOG_FILE"
     sleep 3
 done

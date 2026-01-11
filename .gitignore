@@ -6,3 +6,4 @@ __pycache__/
 *.pyc
 *.bat
 *.log
+logs/incoming_sensor_payload.log

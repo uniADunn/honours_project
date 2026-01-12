@@ -14,8 +14,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 #MQTT CONFIGURATION
-BROKER_HOST = os.getenv("MQTT_HOST", "192.168.0.208")
-BROKER_PORT = int(os.getenv("MQTT_PORT", 1883))
+BROKER_HOST = os.getenv("MQTT_HOST")
+BROKER_PORT = int(os.getenv("MQTT_PORT"))
+BROKER_USER = os.getenv("MQTT_USER")
+BROKER_PASSWORD = os.getenv("MQTT_PASSWORD")
 
 DATA_TOPIC = "adunn/sensor/light/zone1"
 CMD_TOPIC = "adunn/control/zone1/cmd"
@@ -173,6 +175,11 @@ class PiManager:
 def main():
     manager = PiManager()
     client = mqtt.Client(client_id="pi-manager_zone1")
+
+    if BROKER_USER and BROKER_PASSWORD:
+        client.username_pw.set(BROKER_USER, BROKER_PASSWORD)
+    else:
+        raise RuntimeError("MQTT_USER / MQTT_PASSWORD missing in pi .env")
 
     def on_connect(client, userdata, flags, reason_code, properties=None):
         print(f"[MQTT] Connected with reason_code: {reason_code}")

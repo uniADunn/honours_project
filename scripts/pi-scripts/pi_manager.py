@@ -14,8 +14,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 #MQTT CONFIGURATION
-BROKER_HOST = os.getenv("MQTT_HOST")
-BROKER_PORT = int(os.getenv("MQTT_PORT"))
+BROKER_HOST = os.getenv("MQTT_HOST", "192.168.0.208")
+BROKER_PORT = int(os.getenv("MQTT_PORT", 1883))
 
 DATA_TOPIC = "adunn/sensor/light/zone1"
 CMD_TOPIC = "adunn/control/zone1/cmd"

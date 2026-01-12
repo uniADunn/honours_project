@@ -55,8 +55,10 @@ def safe_sum(*xs):
     return sum(vals) if vals else None
 
 # MQTT Configuration
-MQTT_HOST = os.getenv('MQTT_HOST', '127.0.0.1')
+MQTT_HOST = os.getenv('MQTT_HOST')
 MQTT_PORT = int(os.getenv('MQTT_PORT', 1883))
+MQTT_USER = os.getenv('MQTT_USER')
+MQTT_PASSWORD = os.getenv('MQTT_PASSWORD')
 MQTT_TOPIC = os.getenv('MQTT_TOPIC')
 
 # MySQL Configuration
@@ -241,6 +243,12 @@ def main():
         client_id="backend_sensor_data_process",
         callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2
         )
+    
+    if MQTT_USER and MQTT_PASSWORD:
+        client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+    else:
+        raise RuntimeError("MQTT_USER / MQTT_PASSWORD missing in backend .env")
+    
     client.on_connect = on_connect
     client.on_message = on_message
 

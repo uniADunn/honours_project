@@ -17,8 +17,8 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 
-MYSQL_DB = os.getenv("MYSQL_DB")
-MYSQL_USER = os.getenv("MYSQL_USER")
+MYSQL_DB = os.getenv("MYSQL_DB", "crop_lighting")
+MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 
 if not MYSQL_PASSWORD:
@@ -49,7 +49,7 @@ def db_connect():
 def create_run(conn, run_id:str, note:str = "created by run_light_schedule script"):
     sql_insert = """
     INSERT INTO runs(run_id, created_ts, status, status_ts, note)
-    VALUES (%s, NOW(6), %s, NOW(6), %s)
+    VALUES (%s, UTC_TIMESTAMP(6), %s, UTC_TIMESTAMP(6), %s)
     """
     cur = conn.cursor()
     cur.execute(sql_insert, (run_id, "STARTING", note))
@@ -58,10 +58,10 @@ def create_run(conn, run_id:str, note:str = "created by run_light_schedule scrip
 # update run status
 def set_run_status(conn, run_id: str, status:str, note:str | None = None):
     if note is None:
-        sql_update = "UPDATE runs SET status=%s, status_ts=NOW(6) WHERE run_id=%s"
+        sql_update = "UPDATE runs SET status=%s, status_ts=UTC_TIMESTAMP(6) WHERE run_id=%s"
         args = (status, run_id)
     else:
-        sql_update = "UPDATE runs SET status=%s, status_ts=NOW(6, note=%s WHERE run_id=%s)"
+        sql_update = "UPDATE runs SET status=%s, status_ts=UTC_TIMESTAMP(6), note=%s WHERE run_id=%s"
         args = (status, note, run_id)
     cur= conn.cursor()
     cur.execute(sql_update, args)
@@ -142,7 +142,7 @@ def main():
     create_run(conn, run_id, note="manual test start via scheduler script")
 
     #send start command to pi
-    ack = start_run(zone, run_id, simple_interval_s=5)
+    ack = start_run(zone, run_id, sample_interval_s=5)
     print("[START] ack: ", ack)
 
     if not ack or ack.get("status") != "OK":
@@ -154,7 +154,10 @@ def main():
     print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
     time.sleep(15)
 
-    ack2 = stop_run(zone, run_id, "STOPPED")
+    ack2 = stop_run(zone, run_id)
+    print("[STOP] ack: ", ack2)
+
+    set_run_status(conn, run_id, "STOPPED")
     print("[RUN] Stopped and status updated: STOPPED")
 
     conn.close()

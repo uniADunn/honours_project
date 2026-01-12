@@ -177,7 +177,7 @@ def main():
     client = mqtt.Client(client_id="pi-manager_zone1")
 
     if BROKER_USER and BROKER_PASSWORD:
-        client.username_pw.set(BROKER_USER, BROKER_PASSWORD)
+        client.username_pw_set(BROKER_USER, BROKER_PASSWORD)
     else:
         raise RuntimeError("MQTT_USER / MQTT_PASSWORD missing in pi .env")
 

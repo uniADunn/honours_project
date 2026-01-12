@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 ENV_PATH = Path(__file__).resolve().parents[2] / ".env"   # honours_project/.env
 load_dotenv(dotenv_path=ENV_PATH, override=True)
-print(f"[env] loaded: {ENV_PATH}")
+#print(f"[env] loaded: {ENV_PATH}")
 
 
 # CONFIGURATION
@@ -29,8 +29,8 @@ MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 if not MYSQL_PASSWORD:
     raise RuntimeError("MYSQL_PASSWORD is not set")
 
-print(f"[cfg] MQTT_HOST={MQTT_HOST} MQTT_PORT={MQTT_PORT}")
-print(f"[cfg] MYSQL_HOST={MYSQL_HOST} MYSQL_PORT={MYSQL_PORT} MYSQL_DB={MYSQL_DB} MYSQL_USER={MYSQL_USER}")
+# print(f"[cfg] MQTT_HOST={MQTT_HOST} MQTT_PORT={MQTT_PORT}")
+# print(f"[cfg] MYSQL_HOST={MYSQL_HOST} MYSQL_PORT={MYSQL_PORT} MYSQL_DB={MYSQL_DB} MYSQL_USER={MYSQL_USER}")
 
 
 # HELPER FUNCTIONS

@@ -18,6 +18,8 @@ load_dotenv(dotenv_path=ENV_PATH, override=True)
 # CONFIGURATION
 MQTT_HOST = os.getenv("MQTT_HOST", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_USER = os.getenv("MQTT_USER")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
 
 MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
@@ -98,6 +100,11 @@ def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
         client_id = f"run_scheduler_{uuid.uuid4().hex[:8]}",
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2
     )
+    
+    if MQTT_USER and MQTT_PASSWORD:
+        client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+    else:
+        raise RuntimeError("MQTT_USER / MQTT_PASSWORD missing in backend .env")
 
     client.on_message = waiter.on_message
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)

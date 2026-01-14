@@ -415,3 +415,104 @@
 [run] starting mqtt client loop... ctrl+c to stop
 [mqtt] connected with reason_code= Success
 [mqtt] subscribed to topic: adunn/sensor/light/#
+[14/01/2026  0:00:09.34] Supervisor starting...
+[14/01/2026  0:00:09.36] PROJECT_DIR=C:\Users\ad731\Desktop\crop_lighting\honours_project
+[14/01/2026  0:00:09.39] PYTHON=C:\Users\ad731\Desktop\crop_lighting\honours_project\.venv\Scripts\python.exe
+[14/01/2026  0:00:09.41] SCRIPT=C:\Users\ad731\Desktop\crop_lighting\honours_project\scripts\backend-scripts\incoming_sensor_payload.py
+[14/01/2026  0:00:09.44] Launching ingestion...
+[config] reference irradiance E_ref = 1.0767 W/m2
+[db] connected to database
+[run] starting mqtt client loop... ctrl+c to stop
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:06:13.334777, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:06:18.457559, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:06:23.580671, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:06:28.703606, source: pi-01, zone: ZONE1
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:07:49.492113, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:07:54.615125, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:07:59.736684, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:08:04.860344, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:08:39.393639, source: pi-01, zone: ZONE1
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:09:16.133107, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:09:21.254663, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:09:26.376172, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:09:31.493883, source: pi-01, zone: ZONE1
+[14/01/2026  0:13:56.22] Supervisor starting...
+[14/01/2026  0:13:56.25] PROJECT_DIR=C:\Users\ad731\Desktop\crop_lighting\honours_project
+[14/01/2026  0:13:56.26] PYTHON=C:\Users\ad731\Desktop\crop_lighting\honours_project\.venv\Scripts\python.exe
+[14/01/2026  0:13:56.28] SCRIPT=C:\Users\ad731\Desktop\crop_lighting\honours_project\scripts\backend-scripts\incoming_sensor_payload.py
+[14/01/2026  0:13:56.29] Launching ingestion...
+[config] reference irradiance E_ref = 1.0767 W/m2
+[db] connected to database
+[run] starting mqtt client loop... ctrl+c to stop
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:18:30.211987, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:18:35.334970, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:18:40.458010, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:18:45.581325, source: pi-01, zone: ZONE1
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:20:46.354074, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:20:51.477061, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:20:56.598546, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 00:21:01.721743, source: pi-01, zone: ZONE1
+[14/01/2026  0:23:01.67] Ingestion exited (code 1073807364). Restarting in 5s...
+[14/01/2026  0:23:02.01] Launching ingestion...
+[14/01/2026  8:30:39.20] Supervisor starting...
+[14/01/2026  8:30:39.20] PROJECT_DIR=C:\Users\ad731\Desktop\crop_lighting\honours_project
+[14/01/2026  8:30:39.22] PYTHON=C:\Users\ad731\Desktop\crop_lighting\honours_project\.venv\Scripts\python.exe
+[14/01/2026  8:30:39.24] SCRIPT=C:\Users\ad731\Desktop\crop_lighting\honours_project\scripts\backend-scripts\incoming_sensor_payload.py
+[14/01/2026  8:30:39.26] Launching ingestion...
+[config] reference irradiance E_ref = 1.0767 W/m2
+[db] connected to database
+[run] starting mqtt client loop... ctrl+c to stop
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 08:34:57.587758, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 08:35:02.710987, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 08:35:07.834264, source: pi-01, zone: ZONE1
+[mqtt] inserted topic adunn/sensor/light/zone1, timestamp: 2026-01-14 08:35:12.957601, source: pi-01, zone: ZONE1
+[14/01/2026  8:52:52.53] Ingestion exited (code 1073807364). Restarting in 5s...
+[14/01/2026  8:52:52.66] Launching ingestion...
+[14/01/2026  8:55:52.36] Supervisor starting...
+[14/01/2026  8:55:52.38] PROJECT_DIR=C:\Users\ad731\Desktop\crop_lighting\honours_project
+[14/01/2026  8:55:52.40] PYTHON=C:\Users\ad731\Desktop\crop_lighting\honours_project\.venv\Scripts\python.exe
+[14/01/2026  8:55:52.42] SCRIPT=C:\Users\ad731\Desktop\crop_lighting\honours_project\scripts\backend-scripts\incoming_sensor_payload.py
+[14/01/2026  8:55:52.44] Launching ingestion...
+[config] reference irradiance E_ref = 1.0767 W/m2
+[db] connected to database
+[run] starting mqtt client loop... ctrl+c to stop
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#
+[mqtt] connected with reason_code= Success
+[mqtt] subscribed to topic: adunn/sensor/light/#

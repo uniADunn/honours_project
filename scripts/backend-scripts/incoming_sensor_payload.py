@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import json
 import sys
 from datetime import datetime
+import time
 
 import mysql.connector
 from mysql.connector import Error
@@ -278,6 +279,60 @@ def on_message(client, userdata, msg):
     except Error as e:
         print(f"[mqtt] insert failed: {e} | row= {row}")
 
+def on_disconnect(client, userdata, reason_code, properties=None):
+    print(f"[MQTT] Disconnected with reason_code: {reason_code}.")
+
+def run_mqtt_forever(cur):
+    if not (MQTT_USER and MQTT_PASSWORD):
+        raise RuntimeError("MQTT_USER / MQTT_PASSWORD missing in backend .env")
+    if not MQTT_HOST:
+        raise RuntimeError("MQTT_HOST is not set (expected Pi Netbird IP address.)")
+    if not MQTT_TOPIC:
+        raise RuntimeError("MQTT_TOPIC is not set.")
+    backoff_s = 1
+
+    while True:
+        client = mqtt_client.Client(
+            client_id = "backend_sensor_data_process",
+            callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2
+        )
+
+        client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+        client.on_connect = on_connect
+        client.on_disconnect = on_disconnect
+        client.on_message = on_message
+
+        client.user_data_set({'db_cursor': cur})
+        client.reconnect_delay_set(min_delay=1, max_delay=60)
+
+        try:
+            print(f"[MQTT] Connecting to {MQTT_HOST}:{MQTT_PORT}...")
+            client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+
+            backoff_s = 1
+
+            print("[RUN] Starting mqtt client loop... ctrl+C to stop")
+            client.loop_forever()
+
+            print(f"\n[MQTT] MQTT client loop has exited unexpectedly. reconnection in 5 seconds...")
+            time.sleep(5)
+        except KeyboardInterrupt:
+            print("\n[RUN] stopping mqtt client loop (keyboard interrupt) ...")
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+            break
+        except Exception as e:
+            print(f"[MQTT] MQTT connection/loop error: {e!r}. Reconnecting in {backoff_s} seconds...")
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+            time.sleep(backoff_s)
+            backoff_s = min(backoff_s * 2, 60)
+            continue
+
 def main():
     try:
         conn = db_connect()
@@ -287,47 +342,15 @@ def main():
         print(f"[db] connectionn failed: {e}")
         sys.exit(1)
     
-    client = mqtt_client.Client(
-        client_id="backend_sensor_data_process",
-        callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2
-        )
-    
-    if MQTT_USER and MQTT_PASSWORD:
-        client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
-    else:
-        raise RuntimeError("MQTT_USER / MQTT_PASSWORD missing in backend .env")
-    
-    client.on_connect = on_connect
-    client.on_message = on_message
-
-    #pass db cursor via userdata
-    client.user_data_set({'db_cursor': cur})
-
     try:
-        client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
-    except Exception as e:
-        print(f"[mqtt] connection failed: {e}")
-        sys.exit(1)
-
-    print("[run] starting mqtt client loop... ctrl+c to stop")
-    try:
-        client.loop_forever()
-    except KeyboardInterrupt:
-        print("\n[run] stopping mqtt client loop (keyboard interupt) ...")
-        lock.releaseLock()
-    except Exception as e:
-        print(f"\n[run] stopping mqtt client loop (Exception): {e!r}")
+        run_mqtt_forever(cur)
     finally:
-        try:
-            client.disconnect()
-            lock.releaseLock()
-        except Exception:
-            pass
         try:
             cur.close()
             conn.close()
         except Exception:
             pass
+
 
 if __name__ == "__main__":
     LOCK_FILE = Path(__file__).resolve().parents[2] / "logs" / "incoming_sensor_payload.lock"
@@ -338,4 +361,9 @@ if __name__ == "__main__":
     except RuntimeError as e:
         print(f"[FILELOCK] RuntimeError: {str(e)}")
         raise SystemExit(2)
-    main()
+    
+    try:
+        main()
+    finally:
+        lock.releaseLock()
+    

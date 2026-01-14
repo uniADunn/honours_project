@@ -8,9 +8,57 @@ from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
 import paho.mqtt.client as mqtt_client
+from pathlib import Path
 
 # Load environment variables from .env file
 load_dotenv()
+
+class SingleInstanceLock:
+    def __init__(self, lock_path: Path):
+        self.lock_path = lock_path
+        self.fp = None
+
+    def acquireLock(self):
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self.fp = open(self.lock_path, 'a+', encoding='utf-8')
+
+        try:
+            if os.name == 'nt':
+                import msvcrt
+                # lock 1 byte (non-blocking)
+                msvcrt.locking(self.fp.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except Exception:
+            raise RuntimeError(f"Another instance is already running (lock: {self.lock_path})")
+        
+        try:
+            self.fp.seek(0)
+            self.fp.truncate()
+            self.fp.write(str(os.getpid()))
+            self.fp.flush()
+        except Exception:
+            pass
+
+    def releaseLock(self):
+        if not self.fp:
+            return
+        try:
+            if os.name == 'nt':
+                import msvcrt
+                self.fp.seek(0)
+                msvcrt.locking(self.fp.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.fp.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        try:
+            self.fp.close()
+        except Exception:
+            pass
+        self.fp = None
 
 # DATASHEET REFERENCE IRRADIANCE: Ee = (107.67µW/cm² / 100)= 1.0767 W/m²
 E_REF_W_M2 = 107.67 / 100 # 1.0767
@@ -266,11 +314,13 @@ def main():
         client.loop_forever()
     except KeyboardInterrupt:
         print("\n[run] stopping mqtt client loop (keyboard interupt) ...")
+        lock.releaseLock()
     except Exception as e:
         print(f"\n[run] stopping mqtt client loop (Exception): {e!r}")
     finally:
         try:
             client.disconnect()
+            lock.releaseLock()
         except Exception:
             pass
         try:
@@ -280,4 +330,12 @@ def main():
             pass
 
 if __name__ == "__main__":
+    LOCK_FILE = Path(__file__).resolve().parents[2] / "logs" / "incoming_sensor_payload.lock"
+
+    lock = SingleInstanceLock(LOCK_FILE)
+    try:
+        lock.acquireLock()
+    except RuntimeError as e:
+        print(f"[FILELOCK] RuntimeError: {str(e)}")
+        raise SystemExit(2)
     main()

@@ -168,15 +168,19 @@ def main():
     
     set_run_status(conn, run_id, "RUNNING")
     print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
-    time.sleep(15)
-
-    ack2 = stop_run(zone, run_id)
-    print("[STOP] ack: ", ack2)
-
-    set_run_status(conn, run_id, "STOPPED")
-    print("[RUN] Stopped and status updated: STOPPED")
-
-    conn.close()
+    try:
+        time.sleep(15)
+        ack2 = stop_run(zone, run_id)
+        print("[STOP] ack: ", ack2)
+        set_run_status(conn, run_id, "COMPLETED")
+    except KeyboardInterrupt:
+        print("Keyboard Interrupt detected, manually stopping the run...")
+        ack2 = stop_run(zone, run_id)
+        print("[STOP] ack: ", ack2)
+        set_run_status(conn, run_id, "STOPPED")
+        print("[RUN] Stopped and status updated: STOPPED")
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     main()

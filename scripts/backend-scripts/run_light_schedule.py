@@ -177,7 +177,7 @@ def main():
         print("Keyboard Interrupt detected, manually stopping the run...")
         ack2 = stop_run(zone, run_id)
         print("[STOP] ack: ", ack2)
-        set_run_status(conn, run_id, "STOPPED")
+        set_run_status(conn, run_id, "STOPPED", note="Stopped via Keyboard Interrupt")
         print("[RUN] Stopped and status updated: STOPPED")
     finally:
         conn.close()

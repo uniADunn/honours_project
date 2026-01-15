@@ -179,6 +179,11 @@ def main():
         print("[STOP] ack: ", ack2)
         set_run_status(conn, run_id, "STOPPED", note="Stopped via Keyboard Interrupt")
         print("[RUN] Stopped and status updated: STOPPED")
+    except Exception as e:
+        print(f"[RUN] Exception occurred: {e}, stopping the run...")
+        ack2 = stop_run(zone, run_id)
+        print("[STOP] ack: ", ack2)
+        set_run_status(conn, run_id, "FAILED", note=f"Exception occurred during run: {e}")
     finally:
         conn.close()
 

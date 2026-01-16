@@ -132,19 +132,16 @@ class AckWaiter:
             data = json.loads(payload)
             self.last_ack = data
         except Exception:
-            LOGGER.error("[MQTT] Error decoding ACK Message")
+            LOGGER.error("[MQTT] Error decoding payload or parsing JSON")
             return
 
 def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
     cmd_topic, ack_topic, _data_topic = get_topics(zone)
-    
     waiter = AckWaiter()
-
     client = mqtt.Client(
         client_id = f"run_scheduler_{uuid.uuid4().hex[:8]}",
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2
     )
-    
     if MQTT_USER and MQTT_PASSWORD:
         client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
         LOGGER.info("[MQTT] Using MQTT_USER and MQTT_PASSWORD from backend .env")
@@ -158,7 +155,7 @@ def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
     client.loop_start()
 
     client.publish(cmd_topic, json.dumps(payload))
-    LOGGER.info(f"[MQTT] connected to MQTT broker at {MQTT_HOST}:{MQTT_PORT}\nSubscribed to {ack_topic}\nPublished to {cmd_topic}: {payload}")
+    LOGGER.info(f"[MQTT] connected to MQTT broker at {MQTT_HOST}:{MQTT_PORT}, Subscribed to {ack_topic}, Publishing to {cmd_topic}, with payload: {payload}")
 
     #wait for ack or timeout (no reply)
     deadline = time.time() +timeout_s
@@ -212,36 +209,36 @@ def main():
 
     #send start command to pi
     ack = start_run(zone, run_id, sample_interval_s=5)
-    print("[START] ack: ", ack)
+    #print("[START] ack: ", ack)
 
     if not ack or ack.get("status") != "OK":
         set_run_status(conn, run_id, "FAILED", note=f"Start Failed, ack: {ack}")
         LOGGER.error(f"[RUN SCHEDULER] Start run failed for run_id: {run_id}, ack: {ack}")
-        print("[START] Failed; updated runs.status: FAILED")
+        #print("[START] Failed; updated runs.status: FAILED")
         return
     LOGGER.info(f"[RUN SCHEDULER] Start run succeded for run_id: {run_id}, status: RUNNING")
     set_run_status(conn, run_id, "RUNNING")
-    print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
-    LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}\n Waiting 15 seconds to accumulate sensor readings...")
+    #print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
+    LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting 15 seconds to accumulate sensor readings...")
     try:
         time.sleep(15)
         ack2 = stop_run(zone, run_id)
-        print("[STOP] ack: ", ack2)
+        #print("[STOP] ack: ", ack2)
         set_run_status(conn, run_id, "COMPLETED")
         LOGGER.info(f"[RUN SCHEDULER] Run completed successfully for run_id: {run_id}, status: COMPLETED")
     except KeyboardInterrupt:
         LOGGER.info("[RUN SCHEDULER] Keyboard Interrupt detected, Stopping the run...")
         #print("Keyboard Interrupt detected, manually stopping the run...")
         ack2 = stop_run(zone, run_id)
-        print("[STOP] ack: ", ack2)
+        #print("[STOP] ack: ", ack2)
         set_run_status(conn, run_id, "STOPPED", note="Stopped via Keyboard Interrupt")
         LOGGER.info(f"[RUN SCHEDULER] Run stopped via Keyboard Interrupt for run_id: {run_id}, status: STOPPED")
         #print("[RUN] Stopped and status updated: STOPPED")
     except Exception as e:
         LOGGER.error(f"[RUN SCHEDULER] Exception occurred: {e}, stopping the run...")
-        print(f"[RUN] Exception occurred: {e}, stopping the run...")
+        #print(f"[RUN] Exception occurred: {e}, stopping the run...")
         ack2 = stop_run(zone, run_id)
-        print("[STOP] ack: ", ack2)
+        #print("[STOP] ack: ", ack2)
         set_run_status(conn, run_id, "FAILED", note=f"Exception occurred during run: {e}")
         LOGGER.info(f"[RUN SCHEDULER] Run Failed due to an exception for run_id: {run_id}, status: FAILED")
     finally:

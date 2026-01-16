@@ -8,11 +8,50 @@ import mysql.connector
 import paho.mqtt.client as mqtt
 import uuid
 
-#load_dotenv()
 from pathlib import Path
-ENV_PATH = Path(__file__).resolve().parents[2] / ".env"   # honours_project/.env
-load_dotenv(dotenv_path=ENV_PATH, override=True)
+import logging
+from logging.handlers import RotatingFileHandler
+
+load_dotenv()
+
+# ENV_PATH = Path(__file__).resolve().parents[2] / ".env"   # honours_project/.env
+# load_dotenv(dotenv_path=ENV_PATH, override=True)
 #print(f"[env] loaded: {ENV_PATH}")
+
+def setup_logger() -> logging.Logger:
+    repo_root = Path(__file__).resolve().parents[2]
+    log_dir = repo_root / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = log_dir / "light_schedule.log"
+
+    logger = logging.getLogger("light_schedule")
+    logger.setLevel(logging.INFO)
+
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+
+    #console_handler
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+
+    #rotating file handler (2mb per file keep 5 old files)
+    fh = RotatingFileHandler(
+        log_file,
+        maxBytes=2*1024*1024,
+        backupCount=5,
+        encoding="utf-8"
+    )
+    fh.setFormatter(fmt)
+
+    #prevent duplicate handlers
+    if not logger.handlers:
+        logger.addHandler(sh)
+        logger.addHandler(fh)
+    
+    logger.info(f"Logger initialized. log_file={log_file}")
+    return logger
+
+LOGGER = setup_logger()
 
 
 # CONFIGURATION
@@ -29,6 +68,7 @@ MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 
 if not MYSQL_PASSWORD:
+    LOGGER.error("MYSQL_PASSWORD is not set in backend .env")
     raise RuntimeError("MYSQL_PASSWORD is not set")
 
 # print(f"[cfg] MQTT_HOST={MQTT_HOST} MQTT_PORT={MQTT_PORT}")
@@ -65,15 +105,18 @@ def create_run(conn, run_id:str, note:str = "created by run_light_schedule scrip
     cur = conn.cursor()
     cur.execute(sql_insert, (run_id, "STARTING", note))
     cur.close()
+    LOGGER.info(f"[RUN SCHEDULER] Created run in database. run_id: {run_id}")
 
 # update run status
 def set_run_status(conn, run_id: str, status:str, note:str | None = None):
     if note is None:
         sql_update = "UPDATE runs SET status=%s, status_ts=UTC_TIMESTAMP(6) WHERE run_id=%s"
         args = (status, run_id)
+        LOGGER.info(f"[RUN SCHEDULER]Updated run status. run_id: {run_id}, status: {status}")
     else:
         sql_update = "UPDATE runs SET status=%s, status_ts=UTC_TIMESTAMP(6), note=%s WHERE run_id=%s"
         args = (status, note, run_id)
+        LOGGER.info(f"[RUN SCHEDULER] Updated run status. run_id: {run_id}, status: {status}, note: {note}")
     cur= conn.cursor()
     cur.execute(sql_update, args)
     cur.close()
@@ -89,6 +132,7 @@ class AckWaiter:
             data = json.loads(payload)
             self.last_ack = data
         except Exception:
+            LOGGER.error("[MQTT] Error decoding ACK Message")
             return
 
 def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
@@ -103,8 +147,10 @@ def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
     
     if MQTT_USER and MQTT_PASSWORD:
         client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+        LOGGER.info("[MQTT] Using MQTT_USER and MQTT_PASSWORD from backend .env")
     else:
-        raise RuntimeError("MQTT_USER / MQTT_PASSWORD missing in backend .env")
+        LOGGER.error("[MQTT] MQTT_USER / MQTT_PASSWORD missing in backend .env")
+        raise RuntimeError("[MQTT] MQTT_USER / MQTT_PASSWORD missing in backend .env")
 
     client.on_message = waiter.on_message
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
@@ -112,6 +158,7 @@ def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
     client.loop_start()
 
     client.publish(cmd_topic, json.dumps(payload))
+    LOGGER.info(f"[MQTT] connected to MQTT broker at {MQTT_HOST}:{MQTT_PORT}\nSubscribed to {ack_topic}\nPublished to {cmd_topic}: {payload}")
 
     #wait for ack or timeout (no reply)
     deadline = time.time() +timeout_s
@@ -120,10 +167,12 @@ def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
             ack = waiter.last_ack
             client.loop_stop()
             client.disconnect()
+            LOGGER.info(f"[RUN SCHEDULER] Received ACK: {ack}")
             return ack
         time.sleep(0.05)
     client.loop_stop()
     client.disconnect()
+    LOGGER.warning(f"[RUN SCHEDULER] ACK wait timed out after {timeout_s} seconds")
     return None
 
 # run operations: start/stop
@@ -133,7 +182,9 @@ def start_run(zone:str, run_id:str, sample_interval_s: int = 5):
         "run_id": run_id,
         "sample_interval_s": int(sample_interval_s)
     }
+    LOGGER.info(f"[RUN SCHEDULER] Sending START command to zone: {zone}, run_id: {run_id}, sample_interval_s: {sample_interval_s}")
     ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=8)
+    LOGGER.info(f"[RUN SCHEDULER] START command ACK received: {ack}")
     return ack
 
 def stop_run(zone:str, run_id:str):
@@ -141,7 +192,9 @@ def stop_run(zone:str, run_id:str):
         "type": "STOP",
         "run_id": run_id
     }
+    LOGGER.info(f"[RUN SCHEDULER] Sending STOP command to zone: {zone}, run_id: {run_id}")
     ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=5)
+    LOGGER.info(f"[RUN SCHEDULER] STOP command ACK received: {ack}")
     return ack
 
 # main flow
@@ -163,27 +216,34 @@ def main():
 
     if not ack or ack.get("status") != "OK":
         set_run_status(conn, run_id, "FAILED", note=f"Start Failed, ack: {ack}")
+        LOGGER.error(f"[RUN SCHEDULER] Start run failed for run_id: {run_id}, ack: {ack}")
         print("[START] Failed; updated runs.status: FAILED")
         return
-    
+    LOGGER.info(f"[RUN SCHEDULER] Start run succeded for run_id: {run_id}, status: RUNNING")
     set_run_status(conn, run_id, "RUNNING")
     print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
+    LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}\n Waiting 15 seconds to accumulate sensor readings...")
     try:
         time.sleep(15)
         ack2 = stop_run(zone, run_id)
         print("[STOP] ack: ", ack2)
         set_run_status(conn, run_id, "COMPLETED")
+        LOGGER.info(f"[RUN SCHEDULER] Run completed successfully for run_id: {run_id}, status: COMPLETED")
     except KeyboardInterrupt:
-        print("Keyboard Interrupt detected, manually stopping the run...")
+        LOGGER.info("[RUN SCHEDULER] Keyboard Interrupt detected, Stopping the run...")
+        #print("Keyboard Interrupt detected, manually stopping the run...")
         ack2 = stop_run(zone, run_id)
         print("[STOP] ack: ", ack2)
         set_run_status(conn, run_id, "STOPPED", note="Stopped via Keyboard Interrupt")
-        print("[RUN] Stopped and status updated: STOPPED")
+        LOGGER.info(f"[RUN SCHEDULER] Run stopped via Keyboard Interrupt for run_id: {run_id}, status: STOPPED")
+        #print("[RUN] Stopped and status updated: STOPPED")
     except Exception as e:
+        LOGGER.error(f"[RUN SCHEDULER] Exception occurred: {e}, stopping the run...")
         print(f"[RUN] Exception occurred: {e}, stopping the run...")
         ack2 = stop_run(zone, run_id)
         print("[STOP] ack: ", ack2)
         set_run_status(conn, run_id, "FAILED", note=f"Exception occurred during run: {e}")
+        LOGGER.info(f"[RUN SCHEDULER] Run Failed due to an exception for run_id: {run_id}, status: FAILED")
     finally:
         conn.close()
 

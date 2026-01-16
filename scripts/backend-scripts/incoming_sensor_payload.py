@@ -11,8 +11,46 @@ from mysql.connector import Error
 import paho.mqtt.client as mqtt_client
 from pathlib import Path
 
+import logging
+from logging.handlers import RotatingFileHandler
+
 # Load environment variables from .env file
 load_dotenv()
+
+def setup_logger() -> logging.Logger:
+    repo_root = Path(__file__).resolve().parents[2]
+    log_dir = repo_root / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = log_dir / "backend_ingestion.log"
+
+    logger = logging.getLogger("backend_ingestion")
+    logger.setLevel(logging.INFO)
+
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+
+    #console_handler
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+
+    #rotating file handler (2mb per file keep 5 old files)
+    fh = RotatingFileHandler(
+        log_file,
+        maxBytes=2*1024*1024,
+        backupCounts=5,
+        encoding="utf-8"
+    )
+    fh.setFormatter(fmt)
+
+    #prevent duplicate handlers
+    if not logger.handlers:
+        logger.addHandler(sh)
+        logger.addHandler(fh)
+    
+    logger.info(f"Logger initialized. log_file={log_file}")
+    return logger
+
+LOGGER = setup_logger()
 
 class SingleInstanceLock:
     def __init__(self, lock_path: Path):
@@ -28,10 +66,12 @@ class SingleInstanceLock:
                 import msvcrt
                 # lock 1 byte (non-blocking)
                 msvcrt.locking(self.fp.fileno(), msvcrt.LK_NBLCK, 1)
+                LOGGER.info(f"Acquired lock on {self.lock_path}")
             else:
                 import fcntl
                 fcntl.flock(self.fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except Exception:
+            LOGGER.error(f"Failed to acquire lock on {self.lock_path}\nAnother instance is already running.")
             raise RuntimeError(f"Another instance is already running (lock: {self.lock_path})")
         
         try:
@@ -50,9 +90,11 @@ class SingleInstanceLock:
                 import msvcrt
                 self.fp.seek(0)
                 msvcrt.locking(self.fp.fileno(), msvcrt.LK_UNLCK, 1)
+                LOGGER.info(f"Released lock on {self.lock_path}")
             else:
                 import fcntl
                 fcntl.flock(self.fp.fileno(), fcntl.LOCK_UN)
+                LOGGER.info(f"Released lock on self.lock_path")
         except Exception:
             pass
         try:
@@ -63,7 +105,8 @@ class SingleInstanceLock:
 
 # DATASHEET REFERENCE IRRADIANCE: Ee = (107.67µW/cm² / 100)= 1.0767 W/m²
 E_REF_W_M2 = 107.67 / 100 # 1.0767
-print(f"[config] reference irradiance E_ref = {E_REF_W_M2} W/m2")
+LOGGER.info(f"[CONFIG] Reference Irradiance E_ref = {E_REF_W_M2} W/m2")
+#print(f"[config] reference irradiance E_ref = {E_REF_W_M2} W/m2")
 # DATASHEET REFERENCE COUNTS again=64, atime = 2.78ms (2700k warm white LED)
 GAIN_REF = 64.0
 IT_REF_MS = 27.8
@@ -121,6 +164,7 @@ MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD')
 TABLE = os.getenv('TABLE','light_readings')
 
 if not MYSQL_PASSWORD:
+    LOGGER.error("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
     raise RuntimeError("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
 
 def as_float_or_none(value):
@@ -178,9 +222,11 @@ INSERT INTO {TABLE}(
 
 # MQTT Callbacks
 def on_connect(client, userdata, flags, reason_code, properties=None):
-    print(f"[mqtt] connected with reason_code= {reason_code}")
+    LOGGER.info(f"[MQTT] connected with reason_code: {reason_code}")
+   #print(f"[mqtt] connected with reason_code= {reason_code}")
     client.subscribe(MQTT_TOPIC)
-    print(f"[mqtt] subscribed to topic: {MQTT_TOPIC}")
+    LOGGER.info(f"[MQTT] subscribed to topic: {MQTT_TOPIC}")
+    #print(f"[mqtt] subscribed to topic: {MQTT_TOPIC}")
 
 def on_message(client, userdata, msg):
     raw = msg.payload.decode("utf-8", errors="replace")
@@ -188,7 +234,8 @@ def on_message(client, userdata, msg):
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f"[mqtt] invalid JSON on topic {msg.topic}: {e} | payload = {raw!r}")
+        LOGGER.error(f"[MQTT] invalid JSON on topic {msg.MQTT_TOPIC}:\n error: {e}\n payload = {raw!r}")
+        #print(f"[mqtt] invalid JSON on topic {msg.topic}: {e} | payload = {raw!r}")
         return
     
     # required fields
@@ -197,7 +244,8 @@ def on_message(client, userdata, msg):
     zone = data.get('zone')
 
     if not ts_in or source is None or zone is None:
-        print(f"[MQTT] Missing required fields in payload: ts = {ts_in!r}, source = {source!r}, zone = {zone!r}" )
+        LOGGER.error(f"[MQTT] Missing required fields in payload: timestamp = {ts_in!r}, source = {source!r}, zone = {zone!r}")
+    #   print(f"[MQTT] Missing required fields in payload: ts = {ts_in!r}, source = {source!r}, zone = {zone!r}" )
         return
 
     #convert iso timestamp to mysql datetime format
@@ -210,11 +258,13 @@ def on_message(client, userdata, msg):
         ts_dt = datetime.fromisoformat(ts_in) #aware datetime if offset present
         ts_mysql = ts_dt.replace(tzinfo=None) #store as naive UTC for MySQL DATETIME
     except Exception as e:
-        print(f"[MQTT] invalid ts format: ts={ts_in!r} error={e}")
+        LOGGER.error(f"[MQTT] Invalid timestamp format in payload: ts: {ts_in!r} error: {e}")
+       #print(f"[MQTT] invalid ts format: ts={ts_in!r} error={e}")
         return
 
     if ts_mysql is None or source is None or zone is None:
-        print(f"[mqtt] missing required fields in payload: ts= {ts_in!r}, source= {source!r}, zone= {zone!r}")
+        LOGGER.error(f"[MQTT] Missing required fields in payload: ts = {ts_in!r}, source = {source!r}, zone = {zone!r}")
+        #print(f"[mqtt] missing required fields in payload: ts= {ts_in!r}, source= {source!r}, zone= {zone!r}")
         return
     
     gain_meas = as_float_or_none(data.get("as7341_gain"))
@@ -275,19 +325,25 @@ def on_message(client, userdata, msg):
     try:
         cur = userdata['db_cursor']
         cur.execute(INSERT_SQL, row)
-        print(f"[mqtt] inserted topic {msg.topic}, timestamp: {row['ts']}, source: {row['source']}, zone: {row['zone']}")
+        LOGGER.info(f"[MQTT] Inserted topic {msg.MQTT_TOPIC}, timestamp: {row['ts']}, source: {row['source']}, zone: {row['zone']}")
+        #print(f"[mqtt] inserted topic {msg.topic}, timestamp: {row['ts']}, source: {row['source']}, zone: {row['zone']}")
     except Error as e:
-        print(f"[mqtt] insert failed: {e} | row= {row}")
+        LOGGER.error(f"[MQTT] Insert failed: {e}\nrow: {row}")
+        #print(f"[mqtt] insert failed: {e} | row= {row}")
 
 def on_disconnect(client, userdata, reason_code, properties=None):
-    print(f"[MQTT] Disconnected with reason_code: {reason_code}.")
+    LOGGER.info(f"[MQTT] Disconnected with reason_code: {reason_code}.")
+    #print(f"[MQTT] Disconnected with reason_code: {reason_code}.")
 
 def run_mqtt_forever(cur):
     if not (MQTT_USER and MQTT_PASSWORD):
+        LOGGER.error("MQTT_USER / MQTT_PASSWORD missing in backend .env")
         raise RuntimeError("MQTT_USER / MQTT_PASSWORD missing in backend .env")
     if not MQTT_HOST:
+        LOGGER.error("MQTT_HOST is not set (expected Pi Netbird IP address.)")
         raise RuntimeError("MQTT_HOST is not set (expected Pi Netbird IP address.)")
     if not MQTT_TOPIC:
+        LOGGER.error("MQTT_TOPIC is not set.")
         raise RuntimeError("MQTT_TOPIC is not set.")
     backoff_s = 1
 
@@ -306,25 +362,28 @@ def run_mqtt_forever(cur):
         client.reconnect_delay_set(min_delay=1, max_delay=60)
 
         try:
-            print(f"[MQTT] Connecting to {MQTT_HOST}:{MQTT_PORT}...")
+            LOGGER.info(f"[MQTT] Connecting to {MQTT_HOST}:{MQTT_PORT}...")
+            #print(f"[MQTT] Connecting to {MQTT_HOST}:{MQTT_PORT}...")
             client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
 
             backoff_s = 1
-
-            print("[RUN] Starting mqtt client loop... ctrl+C to stop")
+            LOGGER.info("[RUN] Starting mqtt client loop... ctrl+C to stop")
+            #print("[RUN] Starting mqtt client loop... ctrl+C to stop")
             client.loop_forever()
-
-            print(f"\n[MQTT] MQTT client loop has exited unexpectedly. reconnection in 5 seconds...")
+            LOGGER.info("[MQTT] MQTT client loop has exited unexpectedly. reconnection in 5 seconds...")
+            #print(f"\n[MQTT] MQTT client loop has exited unexpectedly. reconnection in 5 seconds...")
             time.sleep(5)
         except KeyboardInterrupt:
-            print("\n[RUN] stopping mqtt client loop (keyboard interrupt) ...")
+            LOGGER.info("\n[RUN] stopping MQTT client loop (keyboard interrupt) ...")
+            #print("\n[RUN] stopping mqtt client loop (keyboard interrupt) ...")
             try:
                 client.disconnect()
             except Exception:
                 pass
             break
         except Exception as e:
-            print(f"[MQTT] MQTT connection/loop error: {e!r}. Reconnecting in {backoff_s} seconds...")
+            LOGGER.error(f"[MQTT] MQTT connection/loop error: {e!r}. Reconnecting in {backoff_s} seconds...")
+            #print(f"[MQTT] MQTT connection/loop error: {e!r}. Reconnecting in {backoff_s} seconds...")
             try:
                 client.disconnect()
             except Exception:
@@ -337,9 +396,11 @@ def main():
     try:
         conn = db_connect()
         cur = conn.cursor()
-        print("[db] connected to database")
+        LOGGER.info("[DB] Connected to database")
+        #print("[db] connected to database")
     except Error as e:
-        print(f"[db] connectionn failed: {e}")
+        LOGGER.error(f"[DB] Connection  to database failed: {e}")
+        #print(f"[db] connectionn failed: {e}")
         sys.exit(1)
     
     try:
@@ -358,12 +419,15 @@ if __name__ == "__main__":
     lock = SingleInstanceLock(LOCK_FILE)
     try:
         lock.acquireLock()
+        LOGGER.info(f"[FILELOCK] Acquired lock: {LOCK_FILE}")
     except RuntimeError as e:
-        print(f"[FILELOCK] RuntimeError: {str(e)}")
+        LOGGER.error(f"[FILELOCK] Runtime Error: {str(e)}")
+        #print(f"[FILELOCK] RuntimeError: {str(e)}")
         raise SystemExit(2)
     
     try:
         main()
     finally:
         lock.releaseLock()
+        LOGGER.info(f"[FILELOCK] Release lock: {LOCK_FILE}")
     

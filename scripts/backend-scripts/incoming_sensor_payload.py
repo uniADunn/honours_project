@@ -120,8 +120,8 @@ class SingleInstanceLock:
 
     def acquireLock(self):
         if os.name != 'nt':
-            LOGGER.error("[FILELOCK]SingleInstanceLock is only implemented for windows (nt) systems.")
             return
+        
         import ctypes
         from ctypes import wintypes
 
@@ -131,15 +131,17 @@ class SingleInstanceLock:
         CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
         CreateMutexW.restype = wintypes.HANDLE
 
-        GetLastError = kernel32.GetLastError
+        ctypes.set_last_error(0)
 
         self.handle = CreateMutexW(None, True, self.name)
         if not self.handle:
             LOGGER.error("[FILELOCK] Failed to create mutex.")
             raise RuntimeError("Failed to create mutex.")
         
+        err = ctypes.get_last_error()
         ERROR_ALREADY_EXISTS = 183
-        if GetLastError() == ERROR_ALREADY_EXISTS:
+
+        if err == ERROR_ALREADY_EXISTS:
             LOGGER.error(f"[FILELOCK] Another instance is already running (mutex: {self.name})")
             raise RuntimeError(f"Another instance is already running (mutex: {self.name})")
         

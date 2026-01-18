@@ -125,13 +125,13 @@ class SingleInstanceLock:
         import ctypes
         from ctypes import wintypes
 
-        kernel132 = ctypes.WinDLL("kernel132", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
-        CreateMutexW = kernel132.CreateMutexW
+        CreateMutexW = kernel32.CreateMutexW
         CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
         CreateMutexW.restype = wintypes.HANDLE
 
-        GetLastError = kernel132.GetLastError
+        GetLastError = kernel32.GetLastError
 
         self.handle = CreateMutexW(None, True, self.name)
         if not self.handle:
@@ -150,10 +150,10 @@ class SingleInstanceLock:
             return
 
         import ctypes
-        kernel132 = ctypes.WinDLL("kernel132", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel132", use_last_error=True)
 
-        kernel132.ReleaseMutex(self.handle)
-        kernel132.CloseHandle(self.handle)
+        kernel32.ReleaseMutex(self.handle)
+        kernel32.CloseHandle(self.handle)
         LOGGER.info(f"[FILELOCK] Released mutex lock: {self.name}")
         self.handle = None
 

@@ -96,7 +96,7 @@ def enable_file_logging(logger: logging.Logger)-> Path:
     log_dir = repo_root / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    log_file = log_dir / "backend_ingestion.log"
+    log_file = (log_dir / "backend_ingestion.log").resolve()
 
     for h in logger.handlers:
         if isinstance(h, RotatingFileHandler) and Path(getattr(h, "baseFilename", "")).resolve() == log_file:
@@ -311,7 +311,7 @@ def db_insert_with_reconnect(userdata, row):
                 LOGGER.error(f"[DB] Foreign key constraint failed. Check that 'source', 'zone', and 'run_id' exist.")
                 return False
             
-            LOGGER.error("[DB] Insert failed: {e}. Attempt {attempt}/2...")
+            LOGGER.error(f"[DB] Insert failed: {e}. Attempt {attempt}/2...")
 
             #try reconnecting
             if attempt == 1:
@@ -443,8 +443,9 @@ def on_message(client, userdata, msg):
     }
 
     try:
-        cur = userdata['db_cursor']
-        cur.execute(INSERT_SQL, row)
+       ok = db_insert_with_reconnect(userdata, row)
+       if not ok:
+        return
         LOGGER.info(f"[MQTT] Inserted topic {msg.topic}, timestamp: {row['ts']}, source: {row['source']}, zone: {row['zone']}")
         #print(f"[mqtt] inserted topic {msg.topic}, timestamp: {row['ts']}, source: {row['source']}, zone: {row['zone']}")
     except Error as e:
@@ -540,6 +541,7 @@ if __name__ == "__main__":
         lock.acquireLock()
         enable_file_logging(LOGGER)
         LOGGER.info("[LOGGER] pid=%s, ppid=%s, argv=%s", os.getpid(), os.getppid(), sys.argv)
+        LOGGER.info("[FILELOCK] CONFIRMED SINGLETON (MUTEX HELD)")
         main()
     except RuntimeError as e:
         LOGGER.error(f"[FILELOCK] Runtime Error: {str(e)}")

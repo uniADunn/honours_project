@@ -72,39 +72,51 @@ C_REF = {
     630: 1350,
     680: 1070
 }
+def setup_console_logger() -> logging.Logger:
+    logger = logging.getLogger("backend_ingestion")
+    if getattr(logger, "_configured_console", False):
+        return logger
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
 
-def setup_logger() -> logging.Logger:
+    fmt = logging.formatter("%(asctime)s [%(levelname)s] %(message)s")
+
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
+
+    logger._configured_console = True
+    logger.info("Console. logger initialized (file logging not yet enabled)")
+    return logger
+
+LOGGER = setup_console_logger()
+
+def enable_file_logging(logger: logging.Logger)-> Path:
     repo_root = Path(__file__).resolve().parents[2]
     log_dir = repo_root / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
     log_file = log_dir / "backend_ingestion.log"
 
-    logger = logging.getLogger("backend_ingestion")
-    logger.setLevel(logging.INFO)
+    for h in logger.handlers:
+        if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "") == str(log_file):
+            return log_file
 
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
-    #console_handler
-    sh = logging.StreamHandler()
-    sh.setFormatter(fmt)
-
-    #rotating file handler (2mb per file keep 5 old files)
     fh = RotatingFileHandler(
         log_file,
-        maxBytes=2*1024*1024,
+        maxBytes=2 *1024*1024,
         backupCount=5,
-        encoding="utf-8"
-    )
+        encoding='utf-8',
+        delay= True
+    ) 
     fh.setFormatter(fmt)
+    logger.addHandler(fh)
 
-    #prevent duplicate handlers
-    if not logger.handlers:
-        logger.addHandler(sh)
-        logger.addHandler(fh)
-    
-    logger.info(f"Logger initialized. log_file={log_file}")
-    return logger
+    logger.info("file logging enabled. log_file %s", log_file)
+    return log_file
+
 
 class SingleInstanceLock:
     def __init__(self, name: str):
@@ -160,7 +172,6 @@ class SingleInstanceLock:
         LOGGER.info(f"[FILELOCK] Released mutex lock: {self.name}")
         self.handle = None
 
-LOGGER = setup_logger()
 
 if not MYSQL_PASSWORD:
     LOGGER.error("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
@@ -343,7 +354,7 @@ def on_message(client, userdata, msg):
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        LOGGER.error(f"[MQTT] invalid JSON on topic {msg.MQTT_TOPIC}:\n error: {e}\n payload = {raw!r}")
+        LOGGER.error(f"[MQTT] invalid JSON on topic {msg.topic}:\n error: {e}\n payload = {raw!r}")
         #print(f"[mqtt] invalid JSON on topic {msg.topic}: {e} | payload = {raw!r}")
         return
     
@@ -527,6 +538,8 @@ if __name__ == "__main__":
     lock = SingleInstanceLock(r"Local\HonoursProject_BackendIngestion")
     try:
         lock.acquireLock()
+        enable_file_logging(LOGGER)
+        LOGGER.info("[LOGGER] pid=%s, argv=%s", os.getpid(), os.getppid(), sys.argv)
         main()
     except RuntimeError as e:
         LOGGER.error(f"[FILELOCK] Runtime Error: {str(e)}")

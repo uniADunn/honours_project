@@ -221,7 +221,7 @@ def main():
     #print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
     LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting 15 seconds to accumulate sensor readings...")
     try:
-        time.sleep(15)
+        time.sleep(600) # simulate run for 10 minutes 10 * 60 = 600 seconds)
         ack2 = stop_run(zone, run_id)
         #print("[STOP] ack: ", ack2)
         set_run_status(conn, run_id, "COMPLETED")

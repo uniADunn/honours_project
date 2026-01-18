@@ -16,6 +16,62 @@ from logging.handlers import RotatingFileHandler
 
 # Load environment variables from .env file
 load_dotenv()
+# MQTT Configuration
+MQTT_HOST = os.getenv('MQTT_HOST')
+MQTT_PORT = int(os.getenv('MQTT_PORT', 1883))
+MQTT_TOPIC = os.getenv('MQTT_TOPIC')
+MQTT_USER = os.getenv('MQTT_USER')
+MQTT_PASSWORD = os.getenv('MQTT_PASSWORD')
+
+# MySQL Configuration
+MYSQL_HOST = os.getenv('MYSQL_HOST', '127.0.0.1')
+MYSQL_PORT = int(os.getenv('MYSQL_PORT','3306'))
+MYSQL_DB = os.getenv('MYSQL_DB','crop_lighting')
+TABLE = os.getenv('TABLE','light_readings')
+
+MYSQL_USER = os.getenv('MYSQL_USER', 'root')
+MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD')
+
+# SQL Insert Statement
+INSERT_SQL = f"""
+INSERT INTO {TABLE}(
+    ts, source, zone, run_id, run_seq,
+    as7341_dev_id, bh1750_dev_id,
+    as7341_gain, as7341_atime, as7341_astep, as7341_it_ms,
+    bh1750_lux,
+    as7341_415nm, as7341_445nm, as7341_480nm,
+    as7341_515nm, as7341_555nm, as7341_590nm,
+    as7341_630nm, as7341_680nm,
+    as7341_clear, as7341_nir,
+    blue_W_m2, green_W_m2, red_W_m2
+) VALUES(
+    %(ts)s, %(source)s, %(zone)s, %(run_id)s, %(run_seq)s,
+    %(as7341_dev_id)s, %(bh1750_dev_id)s,
+    %(as7341_gain)s, %(as7341_atime)s, %(as7341_astep)s, %(as7341_it_ms)s,
+    %(bh1750_lux)s,
+    %(as7341_415nm)s, %(as7341_445nm)s, %(as7341_480nm)s,
+    %(as7341_515nm)s, %(as7341_555nm)s, %(as7341_590nm)s,
+    %(as7341_630nm)s, %(as7341_680nm)s,
+    %(as7341_clear)s, %(as7341_nir)s,
+    %(blue_W_m2)s, %(green_W_m2)s, %(red_W_m2)s
+    );
+    """
+# DATASHEET REFERENCE IRRADIANCE: Ee = (107.67µW/cm² / 100)= 1.0767 W/m²
+E_REF_W_M2 = 107.67 / 100 # 1.0767
+
+# DATASHEET REFERENCE COUNTS again=64, atime = 2.78ms (2700k warm white LED)
+GAIN_REF = 64.0
+IT_REF_MS = 27.8
+C_REF = {
+    415: 55,
+    445: 110,
+    480: 210,
+    515: 390,
+    555: 590,
+    590: 840,
+    630: 1350,
+    680: 1070
+}
 
 def setup_logger() -> logging.Logger:
     repo_root = Path(__file__).resolve().parents[2]
@@ -49,8 +105,13 @@ def setup_logger() -> logging.Logger:
     
     logger.info(f"Logger initialized. log_file={log_file}")
     return logger
-
 LOGGER = setup_logger()
+
+if not MYSQL_PASSWORD:
+    LOGGER.error("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
+    raise RuntimeError("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
+
+LOGGER.info(f"[CONFIG] Reference Irradiance E_ref = {E_REF_W_M2} W/m2")
 
 class SingleInstanceLock:
     def __init__(self, lock_path: Path):
@@ -103,24 +164,6 @@ class SingleInstanceLock:
             pass
         self.fp = None
 
-# DATASHEET REFERENCE IRRADIANCE: Ee = (107.67µW/cm² / 100)= 1.0767 W/m²
-E_REF_W_M2 = 107.67 / 100 # 1.0767
-LOGGER.info(f"[CONFIG] Reference Irradiance E_ref = {E_REF_W_M2} W/m2")
-#print(f"[config] reference irradiance E_ref = {E_REF_W_M2} W/m2")
-# DATASHEET REFERENCE COUNTS again=64, atime = 2.78ms (2700k warm white LED)
-GAIN_REF = 64.0
-IT_REF_MS = 27.8
-C_REF = {
-    415: 55,
-    445: 110,
-    480: 210,
-    515: 390,
-    555: 590,
-    590: 840,
-    630: 1350,
-    680: 1070
-}
-
 def wm2_from_counts_ref(counts:int | None, wl_nm: int, gain_meas: float| None, it_meas_ms: float | None):
     """
     Convert as7341 counts to an irradiance proxy (W/m2) using datasheet reference counts.
@@ -146,27 +189,6 @@ def safe_sum(*xs):
     vals = [v for v in xs if v is not None]
     return sum(vals) if vals else None
 
-# MQTT Configuration
-MQTT_HOST = os.getenv('MQTT_HOST')
-MQTT_PORT = int(os.getenv('MQTT_PORT', 1883))
-MQTT_USER = os.getenv('MQTT_USER')
-MQTT_PASSWORD = os.getenv('MQTT_PASSWORD')
-MQTT_TOPIC = os.getenv('MQTT_TOPIC')
-
-# MySQL Configuration
-MYSQL_HOST = os.getenv('MYSQL_HOST', '127.0.0.1')
-MYSQL_PORT = int(os.getenv('MYSQL_PORT','3306'))
-MYSQL_DB = os.getenv('MYSQL_DB','crop_lighting')
-
-MYSQL_USER = os.getenv('MYSQL_USER', 'root')
-MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD')
-
-TABLE = os.getenv('TABLE','light_readings')
-
-if not MYSQL_PASSWORD:
-    LOGGER.error("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
-    raise RuntimeError("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
-
 def as_float_or_none(value):
     try:
         if value is None:
@@ -183,8 +205,6 @@ def as_int_or_none(value):
     except Exception:
         return None
 
-
-
 #DB 
 def db_connect():
     return mysql.connector.connect(
@@ -196,37 +216,67 @@ def db_connect():
         autocommit = True
     )
 
-INSERT_SQL = f"""
-INSERT INTO {TABLE}(
-    ts, source, zone, run_id, run_seq,
-    as7341_dev_id, bh1750_dev_id,
-    as7341_gain, as7341_atime, as7341_astep, as7341_it_ms,
-    bh1750_lux,
-    as7341_415nm, as7341_445nm, as7341_480nm,
-    as7341_515nm, as7341_555nm, as7341_590nm,
-    as7341_630nm, as7341_680nm,
-    as7341_clear, as7341_nir,
-    blue_W_m2, green_W_m2, red_W_m2
-) VALUES(
-    %(ts)s, %(source)s, %(zone)s, %(run_id)s, %(run_seq)s,
-    %(as7341_dev_id)s, %(bh1750_dev_id)s,
-    %(as7341_gain)s, %(as7341_atime)s, %(as7341_astep)s, %(as7341_it_ms)s,
-    %(bh1750_lux)s,
-    %(as7341_415nm)s, %(as7341_445nm)s, %(as7341_480nm)s,
-    %(as7341_515nm)s, %(as7341_555nm)s, %(as7341_590nm)s,
-    %(as7341_630nm)s, %(as7341_680nm)s,
-    %(as7341_clear)s, %(as7341_nir)s,
-    %(blue_W_m2)s, %(green_W_m2)s, %(red_W_m2)s
-    );
-    """
+def db_connect_forever():
+    backoff_s = 1
+    while True:
+        try:
+            conn = db_connect()
+            cur = conn.cursor()
+            LOGGER.info("[DB] Connected to database")
+            return conn, cur
+        except Error as e:
+            LOGGER.error(f"[DB] Connection to database failed: {e}. Retrying in {backoff_s} seconds...")
+            time.sleep(backoff_s)
+            backoff_s = min(backoff_s * 2, 60)
+
+def db_insert_with_reconnect(userdata, row):
+    for attempt in (1,2):
+        try:
+            userdata["db_cursor"].execute(INSERT_SQL, row)
+            return True
+        
+        except Error as e:            
+            errno = getattr(e, "errno", None)
+            if errno == 1452:
+                LOGGER.error(f"[DB] Foreign key constraint failed. Check that 'source', 'zone', and 'run_id' exist.")
+                return False
+            
+            LOGGER.error("[DB] Insert failed: {e}. Attempt {attempt}/2...")
+
+            #try reconnecting
+            if attempt == 1:
+                try:
+                    try:
+                        userdata["db_cursor"].close()
+                    except Exception:
+                        pass
+                    try:
+                        userdata["db_conn"].close()
+                    except Exception:
+                        pass
+
+                    conn, cur  = db_connect_forever()
+                    userdata["db_conn"] = conn
+                    userdata["db_cursor"] = cur
+
+                    LOGGER.info("[DB] Reconnected after insert failure. Retrying insert once...")
+                    continue
+                except Exception as reconnect_err:
+                    LOGGER.error(f"[DB] Reconnection failed: {reconnect_err}.")
+                    return False
+            return False
 
 # MQTT Callbacks
 def on_connect(client, userdata, flags, reason_code, properties=None):
-    LOGGER.info(f"[MQTT] connected with reason_code: {reason_code}")
-   #print(f"[mqtt] connected with reason_code= {reason_code}")
-    client.subscribe(MQTT_TOPIC)
-    LOGGER.info(f"[MQTT] subscribed to topic: {MQTT_TOPIC}")
-    #print(f"[mqtt] subscribed to topic: {MQTT_TOPIC}")
+    session_present = None
+    try:
+        session_present = flags.get("session present")
+    except Exception:
+        session_present = None
+
+    LOGGER.info(f"[MQTT] Connected reason_code: {reason_code}, session_present: {session_present}")
+    client.subscribe(MQTT_TOPIC, qos=1)
+    LOGGER.info(f"[MQTT] Subscribed to topic: {MQTT_TOPIC}")
 
 def on_message(client, userdata, msg):
     raw = msg.payload.decode("utf-8", errors="replace")
@@ -350,6 +400,7 @@ def run_mqtt_forever(cur):
     while True:
         client = mqtt_client.Client(
             client_id = "backend_sensor_data_process",
+            clean_session = False,            
             callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2
         )
 

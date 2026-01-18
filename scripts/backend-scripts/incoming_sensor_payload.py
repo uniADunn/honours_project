@@ -105,13 +105,6 @@ def setup_logger() -> logging.Logger:
     
     logger.info(f"Logger initialized. log_file={log_file}")
     return logger
-LOGGER = setup_logger()
-
-if not MYSQL_PASSWORD:
-    LOGGER.error("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
-    raise RuntimeError("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
-
-LOGGER.info(f"[CONFIG] Reference Irradiance E_ref = {E_REF_W_M2} W/m2")
 
 class SingleInstanceLock:
     def __init__(self, name: str):
@@ -166,6 +159,15 @@ class SingleInstanceLock:
 
         LOGGER.info(f"[FILELOCK] Released mutex lock: {self.name}")
         self.handle = None
+
+LOGGER = setup_logger()
+
+if not MYSQL_PASSWORD:
+    LOGGER.error("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
+    raise RuntimeError("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
+
+LOGGER.info(f"[CONFIG] Reference Irradiance E_ref = {E_REF_W_M2} W/m2")
+
 
 # class SingleInstanceLock:
 #     def __init__(self, lock_path: Path):

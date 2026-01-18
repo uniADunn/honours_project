@@ -79,7 +79,7 @@ def setup_console_logger() -> logging.Logger:
     logger.setLevel(logging.INFO)
     logger.propagate = False
 
-    fmt = logging.formatter("%(asctime)s [%(levelname)s] %(message)s")
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
     sh = logging.StreamHandler()
     sh.setFormatter(fmt)
@@ -99,7 +99,7 @@ def enable_file_logging(logger: logging.Logger)-> Path:
     log_file = log_dir / "backend_ingestion.log"
 
     for h in logger.handlers:
-        if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "") == str(log_file):
+        if isinstance(h, RotatingFileHandler) and Path(getattr(h, "baseFilename", "")).resolve() == log_file:
             return log_file
 
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
@@ -109,7 +109,7 @@ def enable_file_logging(logger: logging.Logger)-> Path:
         maxBytes=2 *1024*1024,
         backupCount=5,
         encoding='utf-8',
-        delay= True
+        delay=True
     ) 
     fh.setFormatter(fmt)
     logger.addHandler(fh)
@@ -445,7 +445,7 @@ def on_message(client, userdata, msg):
     try:
         cur = userdata['db_cursor']
         cur.execute(INSERT_SQL, row)
-        LOGGER.info(f"[MQTT] Inserted topic {msg.MQTT_TOPIC}, timestamp: {row['ts']}, source: {row['source']}, zone: {row['zone']}")
+        LOGGER.info(f"[MQTT] Inserted topic {msg.topic}, timestamp: {row['ts']}, source: {row['source']}, zone: {row['zone']}")
         #print(f"[mqtt] inserted topic {msg.topic}, timestamp: {row['ts']}, source: {row['source']}, zone: {row['zone']}")
     except Error as e:
         LOGGER.error(f"[MQTT] Insert failed: {e}\nrow: {row}")
@@ -539,7 +539,7 @@ if __name__ == "__main__":
     try:
         lock.acquireLock()
         enable_file_logging(LOGGER)
-        LOGGER.info("[LOGGER] pid=%s, argv=%s", os.getpid(), os.getppid(), sys.argv)
+        LOGGER.info("[LOGGER] pid=%s, ppid=%s, argv=%s", os.getpid(), os.getppid(), sys.argv)
         main()
     except RuntimeError as e:
         LOGGER.error(f"[FILELOCK] Runtime Error: {str(e)}")

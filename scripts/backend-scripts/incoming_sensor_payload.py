@@ -150,12 +150,20 @@ class SingleInstanceLock:
     def releaseLock(self):
         if os.name != 'nt':
             return
+        if not self.handle:
+            return
 
         import ctypes
-        kernel32 = ctypes.WinDLL("kernel132", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        try:
+            kernel32.ReleaseMutex(self.handle)
+        except Exception:
+            pass
+        try:
+            kernel32.CloseHandle(self.handle)
+        except Exception:
+            pass
 
-        kernel32.ReleaseMutex(self.handle)
-        kernel32.CloseHandle(self.handle)
         LOGGER.info(f"[FILELOCK] Released mutex lock: {self.name}")
         self.handle = None
 
@@ -514,7 +522,7 @@ def main():
 
 
 if __name__ == "__main__":
-    lock = SingleInstanceLock("Global\\HonoursProject_BackendIngestion")
+    lock = SingleInstanceLock(r"Local\HonoursProject_BackendIngestion")
     try:
         lock.acquireLock()
         main()

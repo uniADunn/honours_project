@@ -114,58 +114,102 @@ if not MYSQL_PASSWORD:
 LOGGER.info(f"[CONFIG] Reference Irradiance E_ref = {E_REF_W_M2} W/m2")
 
 class SingleInstanceLock:
-    def __init__(self, lock_path: Path):
-        self.lock_path = lock_path
-        self.fp = None
+    def __init__(self, name: str):
+        self.name = name
+        self.handle = None
 
     def acquireLock(self):
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        self.fp = open(self.lock_path, 'a+', encoding='utf-8')
+        if os.name != 'nt':
+            LOGGER.error("[FILELOCK]SingleInstanceLock is only implemented for windows (nt) systems.")
+            return
+        import ctypes
+        from ctypes import wintypes
 
-        self.fp.seek(0)
+        kernel132 = ctypes.WinDLL("kernel132", use_last_error=True)
 
-        try:
-            if os.name == 'nt':
-                import msvcrt
-                # lock 1 byte (non-blocking)
-                msvcrt.locking(self.fp.fileno(), msvcrt.LK_NBLCK, 1)
-                LOGGER.info(f"Acquired lock on {self.lock_path}")
-            else:
-                import fcntl
-                fcntl.flock(self.fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except Exception:
-            LOGGER.error(f"Failed to acquire lock on {self.lock_path}\nAnother instance is already running.")
-            raise RuntimeError(f"Another instance is already running (lock: {self.lock_path})")
+        CreateMutexW = kernel132.CreateMutexW
+        CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+        CreateMutexW.restype = wintypes.HANDLE
+
+        GetLastError = kernel132.GetLastError
+
+        self.handle = CreateMutexW(None, True, self.name)
+        if not self.handle:
+            LOGGER.error("[FILELOCK] Failed to create mutex.")
+            raise RuntimeError("Failed to create mutex.")
         
-        try:
-            self.fp.seek(0)
-            self.fp.truncate()
-            self.fp.write(str(os.getpid()))
-            self.fp.flush()
-            LOGGER.info(f"Wrote PID {os.getpid()} to lock file {self.lock_path}")
-        except Exception:
-            pass
+        ERROR_ALREADY_EXISTS = 183
+        if GetLastError() == ERROR_ALREADY_EXISTS:
+            LOGGER.error(f"[FILELOCK] Another instance is already running (mutex: {self.name})")
+            raise RuntimeError(f"Another instance is already running (mutex: {self.name})")
+        
+        LOGGER.info(f"[FILELOCK] acquired mutex lock: {self.name}")
 
     def releaseLock(self):
-        if not self.fp:
+        if os.name != 'nt':
             return
-        try:
-            if os.name == 'nt':
-                import msvcrt
-                self.fp.seek(0)
-                msvcrt.locking(self.fp.fileno(), msvcrt.LK_UNLCK, 1)
-                LOGGER.info(f"Released lock on {self.lock_path}")
-            else:
-                import fcntl
-                fcntl.flock(self.fp.fileno(), fcntl.LOCK_UN)
-                LOGGER.info(f"Released lock on self.lock_path")
-        except Exception:
-            pass
-        try:
-            self.fp.close()
-        except Exception:
-            pass
-        self.fp = None
+
+        import ctypes
+        kernel132 = ctypes.WinDLL("kernel132", use_last_error=True)
+
+        kernel132.ReleaseMutex(self.handle)
+        kernel132.CloseHandle(self.handle)
+        LOGGER.info(f"[FILELOCK] Released mutex lock: {self.name}")
+        self.handle = None
+
+# class SingleInstanceLock:
+#     def __init__(self, lock_path: Path):
+#         self.lock_path = lock_path
+#         self.fp = None
+
+#     def acquireLock(self):
+#         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+#         self.fp = open(self.lock_path, 'a+', encoding='utf-8')
+
+#         self.fp.seek(0)
+
+#         try:
+#             if os.name == 'nt':
+#                 import msvcrt
+#                 # lock 1 byte (non-blocking)
+#                 msvcrt.locking(self.fp.fileno(), msvcrt.LK_NBLCK, 1)
+#                 LOGGER.info(f"Acquired lock on {self.lock_path}")
+#             else:
+#                 import fcntl
+#                 fcntl.flock(self.fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+#         except Exception:
+#             LOGGER.error(f"Failed to acquire lock on {self.lock_path}\nAnother instance is already running.")
+#             raise RuntimeError(f"Another instance is already running (lock: {self.lock_path})")
+        
+#         try:
+#             self.fp.seek(0)
+#             self.fp.truncate()
+#             self.fp.write(str(os.getpid()))
+#             self.fp.flush()
+#             LOGGER.info(f"Wrote PID {os.getpid()} to lock file {self.lock_path}")
+#         except Exception:
+#             pass
+
+#     def releaseLock(self):
+#         if not self.fp:
+#             return
+#         try:
+#             if os.name == 'nt':
+#                 import msvcrt
+#                 self.fp.seek(0)
+#                 msvcrt.locking(self.fp.fileno(), msvcrt.LK_UNLCK, 1)
+#                 LOGGER.info(f"Released lock on {self.lock_path}")
+#             else:
+#                 import fcntl
+#                 fcntl.flock(self.fp.fileno(), fcntl.LOCK_UN)
+#                 LOGGER.info(f"Released lock on self.lock_path")
+#         except Exception:
+#             pass
+#         try:
+#             self.fp.close()
+#         except Exception:
+#             pass
+#         self.fp = None
 
 def wm2_from_counts_ref(counts:int | None, wl_nm: int, gain_meas: float| None, it_meas_ms: float | None):
     """
@@ -468,20 +512,15 @@ def main():
 
 
 if __name__ == "__main__":
-    LOCK_FILE = Path(__file__).resolve().parents[2] / "logs" / "incoming_sensor_payload.lock"
-
-    lock = SingleInstanceLock(LOCK_FILE)
+    lock = SingleInstanceLock("Global\\HonoursProject_BackendIngestion")
     try:
         lock.acquireLock()
-        LOGGER.info(f"[FILELOCK] Acquired lock: {LOCK_FILE}")
+        main()
     except RuntimeError as e:
         LOGGER.error(f"[FILELOCK] Runtime Error: {str(e)}")
         #print(f"[FILELOCK] RuntimeError: {str(e)}")
         raise SystemExit(2)
-    
-    try:
-        main()
     finally:
         lock.releaseLock()
-        LOGGER.info(f"[FILELOCK] Release lock: {LOCK_FILE}")
+        
     

@@ -122,6 +122,8 @@ class SingleInstanceLock:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         self.fp = open(self.lock_path, 'a+', encoding='utf-8')
 
+        self.fp.seek(0)
+
         try:
             if os.name == 'nt':
                 import msvcrt
@@ -140,6 +142,7 @@ class SingleInstanceLock:
             self.fp.truncate()
             self.fp.write(str(os.getpid()))
             self.fp.flush()
+            LOGGER.info(f"Wrote PID {os.getpid()} to lock file {self.lock_path}")
         except Exception:
             pass
 

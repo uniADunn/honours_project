@@ -179,8 +179,14 @@ def start_run(zone:str, run_id:str, sample_interval_s: int = 5):
         "run_id": run_id,
         "sample_interval_s": int(sample_interval_s)
     }
-    LOGGER.info(f"[RUN SCHEDULER] Sending START command to zone: {zone}, run_id: {run_id}, sample_interval_s: {sample_interval_s}")
-    ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=8)
+    try:
+        LOGGER.info(f"[RUN SCHEDULER] Sending START command to zone: {zone}, run_id: {run_id}, sample_interval_s: {sample_interval_s}")
+        ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=8)
+    except Exception as e:
+        LOGGER.error(f"[RUN SCHEDULER] No ACK reply from pi for START command. {e}")
+        stop_run(zone, run_id)
+        return
+    
     LOGGER.info(f"[RUN SCHEDULER] START command ACK received: {ack}")
     return ack
 
@@ -189,8 +195,14 @@ def stop_run(zone:str, run_id:str):
         "type": "STOP",
         "run_id": run_id
     }
-    LOGGER.info(f"[RUN SCHEDULER] Sending STOP command to zone: {zone}, run_id: {run_id}")
-    ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=5)
+    try:
+        LOGGER.info(f"[RUN SCHEDULER] Sending STOP command to zone: {zone}, run_id: {run_id}")
+        ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=5)
+    except Exception as e:
+        LOGGER.error(f"[RUN SCHEDULER] No ACK reply from pi for STOP command. {e}")
+        stop_run(zone, run_id)
+        return
+
     LOGGER.info(f"[RUN SCHEDULER] STOP command ACK received: {ack}")
     return ack
 

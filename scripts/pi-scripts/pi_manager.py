@@ -9,6 +9,8 @@ import busio
 import adafruit_bh1750
 import adafruit_as7341
 
+from collections import deque
+
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -33,6 +35,31 @@ AS7341_GAIN_X = adafruit_as7341.Gain.GAIN_64X
 AS7341_GAIN = 64  # 64X gain; for database
 AS7341_ATIME = 0
 AS7341_ASTEP = 9999
+
+#in memory publish buffer
+MAX_BUFFERED_MSGS = 2000 # 2000 msgs @ 5s interval ~= 2.5 hours
+publish_buffer = deque(maxlen=MAX_BUFFERED_MSGS)
+
+def buffer_message(topic: str, payload_str: str, qos: int = 1, retain: bool = False) -> None:
+    publish_buffer.append({
+        "topic":topic,
+        "payload": payload_str,
+        "qos": qos,
+        "retain": retain,
+        "ts": time.time()
+    })
+
+def flush_buffer(client:mqtt.Client) -> int:
+    sent = 0
+    while publish_buffer and client.is_connected():
+        msg = publish_buffer[0]
+        try:
+            client.publish(msg["topic"], msg["payload"], qos=msg["qos"], retain=msg["retain"])
+            publish_buffer.popleft()
+            sent += 1
+        except Exception:
+            break
+    return sent
 
 def utc_time_now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -174,7 +201,10 @@ class PiManager:
 
 def main():
     manager = PiManager()
-    client = mqtt.Client(client_id="pi-manager_zone1")
+    client = mqtt.Client(
+        client_id="pi-manager_zone1",
+        callback_api_version=mqtt.CallbackAPIVersion.VERSION2    
+    )
 
     if BROKER_USER and BROKER_PASSWORD:
         client.username_pw_set(BROKER_USER, BROKER_PASSWORD)
@@ -183,8 +213,15 @@ def main():
 
     def on_connect(client, userdata, flags, reason_code, properties=None):
         print(f"[MQTT] Connected with reason_code: {reason_code}")
-        client.subscribe(CMD_TOPIC)
+        client.subscribe(CMD_TOPIC, qos=1)
         print(f"[MQTT] Subscribed to topic: {CMD_TOPIC}")
+
+        flushed = flush_buffer(client)
+        if flushed:
+            print(f"[MQTT] Flushed {flushed} buffered sensor messages. Remaining={len(publish_buffer)}")
+    
+    def on_disconnect(client, userdata, reason_code, properties=None):
+        print(f"[MQTT] Disconnected (reason_code={reason_code}). Buffering until reconnect...")
     
     def on_message(client, userdata, msg):
         raw = msg.payload.decode("utf-8", errors="replace")
@@ -276,20 +313,35 @@ def main():
 
     client.on_connect = on_connect
     client.on_message = on_message
+    client.on_disconnect = on_disconnect
 
-    client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
+    client.reconnect_delay_set(min_delay=1, max_delay=30)
+
+    client.connect_async(BROKER_HOST, BROKER_PORT, keepalive=60)
     client.loop_start()
 
     try:
         while not manager.shutdown_requested:
             if manager.run_active:
                 payload = manager.build_payload()
-                info = client.publish(DATA_TOPIC, payload, qos=1, retain=False)
-                info.wait_for_publish()
+
+                if client.is_connected():
+                    try:
+                        info = client.publish(DATA_TOPIC, payload, qos=1, retain=False)
+                        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                            buffer_message(DATA_TOPIC, payload, qos=1, retain=False)
+                    except Exception as e:
+                        print(f"[MQTT] Publish failed. Buffering. err: {e}")
+                        buffer_message(DATA_TOPIC, payload, qos=1, retain=False)
+                else:
+                    buffer_message(DATA_TOPIC, payload, qos=1, retain=False)
+
                 manager.seq += 1
                 time.sleep(manager.sample_interval_s)
+
             else:
-                time.sleep(0.2) # idle wait
+                time.sleep(0.2) # idle wait time
+
     except KeyboardInterrupt:
         print("\n[RUN] User Exit requested. shutting down...")
         manager.run_active = False

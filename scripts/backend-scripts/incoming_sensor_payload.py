@@ -147,8 +147,13 @@ class SingleInstanceLock:
         ERROR_ALREADY_EXISTS = 183
 
         if err == ERROR_ALREADY_EXISTS:
-            LOGGER.error(f"[FILELOCK] Another instance is already running (mutex: {self.name})")
-            raise RuntimeError(f"Another instance is already running (mutex: {self.name})")
+            msg = f"[FILELOCK] Another instance is already running (mutex: {self.name})"
+            LOGGER.error(msg)
+            sys.stderr.write(msg + "\n")
+            sys.stderr.flush()
+            kernel32.CloseHandle(self.handle)
+            self.handle = None
+            raise RuntimeError(msg)
         
         LOGGER.info(f"[FILELOCK] acquired mutex lock: {self.name}")
 
@@ -346,7 +351,6 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 
     LOGGER.info(f"[MQTT] Connected reason_code: {reason_code}, session_present: {session_present}")
     client.subscribe(MQTT_TOPIC, qos=1)
-    LOGGER.info(f"[MQTT] Subscribed to topic: {MQTT_TOPIC}")
 
 def on_message(client, userdata, msg):
     raw = msg.payload.decode("utf-8", errors="replace")
@@ -452,8 +456,8 @@ def on_message(client, userdata, msg):
         LOGGER.error(f"[MQTT] Insert failed: {e}\nrow: {row}")
         #print(f"[mqtt] insert failed: {e} | row= {row}")
 
-def on_disconnect(client, userdata, reason_code, properties=None):
-    LOGGER.info(f"[MQTT] Disconnected with reason_code: {reason_code}.")
+def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
+    LOGGER.info(f"[MQTT] Disconnected with reason_code: {reason_code}, flags: {disconnect_flags}.")
     #print(f"[MQTT] Disconnected with reason_code: {reason_code}.")
 
 def run_mqtt_forever(cur):

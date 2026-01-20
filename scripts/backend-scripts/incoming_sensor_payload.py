@@ -86,7 +86,7 @@ def setup_console_logger() -> logging.Logger:
     logger.addHandler(sh)
 
     logger._configured_console = True
-    logger.info("Console. logger initialized (file logging not yet enabled)")
+    logger.info("Console logger initialized (file logging not yet enabled)")
     return logger
 
 LOGGER = setup_console_logger()
@@ -553,5 +553,3 @@ if __name__ == "__main__":
         raise SystemExit(2)
     finally:
         lock.releaseLock()
-        
-    

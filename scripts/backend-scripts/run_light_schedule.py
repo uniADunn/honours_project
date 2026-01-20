@@ -187,7 +187,7 @@ def start_run(zone:str, run_id:str, sample_interval_s: int = 5):
         stop_run(zone, run_id)
         return
     
-    LOGGER.info(f"[RUN SCHEDULER] START command ACK received: {ack}")
+    #LOGGER.info(f"[RUN SCHEDULER] START command ACK received: {ack}")
     return ack
 
 def stop_run(zone:str, run_id:str):
@@ -203,7 +203,7 @@ def stop_run(zone:str, run_id:str):
         stop_run(zone, run_id)
         return
 
-    LOGGER.info(f"[RUN SCHEDULER] STOP command ACK received: {ack}")
+    #LOGGER.info(f"[RUN SCHEDULER] STOP command ACK received: {ack}")
     return ack
 
 # main flow
@@ -230,11 +230,14 @@ def main():
         return
     LOGGER.info(f"[RUN SCHEDULER] Start run succeded for run_id: {run_id}, status: RUNNING")
     set_run_status(conn, run_id, "RUNNING")
+
     #print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
-    LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting 15 seconds to accumulate sensor readings...")
+    #LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting 15 seconds to accumulate sensor readings...")
+    run_duration = 600 # 10 mins (10 * 60 = 600)
     try:
-        time.sleep(600) # simulate run for 10 minutes 10 * 60 = 600 seconds)
+        time.sleep(run_duration) # simulate run for 10 minutes 10 * 60 = 600 seconds)
         ack2 = stop_run(zone, run_id)
+        LOGGER.info(f"[RUN SCHEDULER]  Stop ACK received. {ack2}")
         #print("[STOP] ack: ", ack2)
         set_run_status(conn, run_id, "COMPLETED")
         LOGGER.info(f"[RUN SCHEDULER] Run completed successfully for run_id: {run_id}, status: COMPLETED")

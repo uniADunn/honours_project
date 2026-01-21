@@ -222,8 +222,11 @@ def main():
         if flushed:
             print(f"[MQTT] Flushed {flushed} buffered sensor messages. Remaining={len(publish_buffer)}")
     
-    def on_disconnect(client, userdata, reason_code, properties=None):
-        print(f"[MQTT] Disconnected (reason_code={reason_code}). Buffering until reconnect...")
+    def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
+        print(
+            f"[MQTT] Disconnected (flags={disconnect_flags}, reason_code={reason_code}). "
+            "Buffering until reconnect..."
+        )
     
     def on_message(client, userdata, msg):
         raw = msg.payload.decode("utf-8", errors="replace")

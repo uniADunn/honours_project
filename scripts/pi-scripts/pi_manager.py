@@ -13,7 +13,50 @@ from collections import deque
 
 import os
 from dotenv import load_dotenv
+
+import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
 load_dotenv()
+
+def setup_file_logger(
+        logger_name: str = "pi_manager_zone1",
+        filename: str = "pi_manager_zone1.log",
+        level: int = logging.INFO)-> logging.Logger:
+    logger = logging.getLogger(logger_name)
+
+    if getattr(logger, "_configured_file", False):
+        return logger
+    
+    logger.setLevel(level)
+    logger.propagate = False
+
+    repo_root = Path(__file__).resolve().parents[2]
+    log_dir = repo_root / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = (log_dir / filename).resolve()
+
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(messages)s")
+
+    fh = RotatingFileHandler(
+        log_file,
+        maxBytes=2*1024*1024,
+        backupcount=5,
+        encoding="utf-8",
+        delays=True
+    )
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
+
+    logger._configured_file = True
+    logger.info(f"[PI MANAGER] Pi Manager Logging Initialized. log_file: {log_file}")
+    return logger
+LOGGER = setup_file_logger()
 
 #MQTT CONFIGURATION
 BROKER_HOST = os.getenv("MQTT_HOST")
@@ -85,15 +128,20 @@ class PiManager:
         try:
             if self.i2c is None:
                 self.i2c = busio.I2C(board.SCL, board.SDA)
+                LOGGER.info("[PI MANAGER] I2C Initialized!")
         except Exception as e:
+            LOGGER.error(f"[PI MANAGER] I2C failed to initialize. {e}")
             return False, f"I2C failed to initialize: {e}"
+        
         
         #BH1750
         try:
             self.lux = adafruit_bh1750.BH1750(self.i2c)
+            LOGGER.info("[PI MANAGER] BH1750 has Initialized!")
         except Exception as e:
             self.lux = None
-            print(f"BH1750 failed to initialize: {e}")
+            LOGGER.warning(f"[PI MANAGER] BH1759 failed to initialize: {e}")
+            #print(f"BH1750 failed to initialize: {e}")
 
         #AS7341
         try:
@@ -101,11 +149,13 @@ class PiManager:
             self.spec.gain = AS7341_GAIN_X
             self.spec.atime = AS7341_ATIME
             self.spec.astep = AS7341_ASTEP
+            LOGGER.info("[PI MANAGER] AS7341 has Initialized!")
         except Exception as e:
             self.spec = None
-            print(f"AS7341 failed to initialize: {e}")
+            LOGGER.warning(f"[PI MANAGER] AS7341 failed to initalize: {e}")
+            #print(f"AS7341 failed to initialize: {e}")
 
-        if self.lux is None and self.spec is None:
+        if self.lux is None and self.spec is None:            
             return False, "No sensors initialized"
         elif self.lux is None and self.spec is not None:
             return True, "OK (AS7341 initialized, BH1750 not connected)"
@@ -249,6 +299,7 @@ def main():
 
             ok, detail = manager.init_sensors()
             if not ok:
+                LOGGER.error(f"[PI MANAGER] {detail}")
                 manager.run_active = False
                 manager.ack(client, {
                     "type": "READY",
@@ -259,6 +310,7 @@ def main():
                     "detail": detail
                 })
                 return
+            LOGGER.warning(f"[PI MANAGER] {detail}")
             manager.seq = 0
             manager.run_active = True
             manager.ack(client, {
@@ -269,6 +321,7 @@ def main():
                 "status": "OK",
                 "detail": detail
             })
+            LOGGER.info(f"[PI MANAGER] Started run_id: {manager.run_id}, sample interval: {manager.sample_interval_s}s")
             print(f"[RUN] Started run_id: {manager.run_id}, sample interval: {manager.sample_interval_s}s")
 
         elif(ctype == "STOP"):
@@ -281,12 +334,14 @@ def main():
                     "status": "ERROR",
                     "detail": f"run_id mismatch: received {run_id}, current {manager.run_id}"
                 })
+                LOGGER.error(f"run_id mismatch: received {run_id}, current {manager.run_id}")
                 return
             manager.run_active = False
             stopped_run = manager.run_id
             manager.run_id = None
             manager.seq = 0
             manager.ack(client, {"type": "STOPPED", "run_id": stopped_run, "source": SOURCE, "zone": ZONE, "status": "OK"})
+            LOGGER.info(f"[PI MANAGER] Stopped run_id: {stopped_run}")
             print(f"[RUN] Stopped run_id: {stopped_run}")
         elif ctype == "EXIT":
             if run_id and manager.run_id and str(run_id) != manager.run_id:
@@ -298,6 +353,7 @@ def main():
                     "status": "ERROR",
                     "detail": f"run_id mismatch: received {run_id}, current {manager.run_id}",
                 })
+                LOGGER.error(f"[PI MANAGER] run_id mismatch: received {run_id}, current {manager.run_id}")
                 return
             manager.run_active = False
             manager.shutdown_requested = True
@@ -312,8 +368,10 @@ def main():
                 "status": "OK",
                 "detail": "shutting down"
             })
+            LOGGER.info(f"[PI MANAGER] Shutdown requested for run_id: {stopped_run}")
             print(f"[RUN] Shutdown requested for run_id: {stopped_run}")
         else:
+            LOGGER.error(f"[PI MANAGER] Unknown Command Type: {cmd}")
             print(f"[CMD] unknown command type: {cmd}")
 
     client.on_connect = on_connect
@@ -331,9 +389,9 @@ def main():
                 if client.is_connected() and len(publish_buffer) > 0:
                     flushed = flush_buffer(client)
                     if flushed:
+                        LOGGER.info(f"[PI MANAGER] Flushed {flushed} buffered messages during run. Remaining: {len(publish_buffer)}")
                         print(f"[MQTT] Flushed {flushed} buffered mssages during run. Remaining : {len(publish_buffer)}")
                 payload = manager.build_payload()
-
                 if client.is_connected():
                     try:
                         info = client.publish(DATA_TOPIC, payload, qos=1, retain=False)
@@ -352,12 +410,14 @@ def main():
                 time.sleep(0.2) # idle wait time
 
     except KeyboardInterrupt:
+        LOGGER.warning("[PI MANAGER] User exit requested. shutting down")
         print("\n[RUN] User Exit requested. shutting down...")
         manager.run_active = False
         manager.shutdown_requested = True
     finally:
         client.loop_stop()
         client.disconnect()
+        LOGGER.info("[PI MANAGER] Disconnected - exit complete")
         print("[RUN] Disconnected - exit complete.")
 
 if __name__ == "__main__":

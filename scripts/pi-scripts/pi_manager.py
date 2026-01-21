@@ -20,6 +20,8 @@ from pathlib import Path
 
 load_dotenv()
 
+_last_buffer_log_ts = 0.0
+
 def setup_file_logger(
         logger_name: str = "pi_manager_zone1",
         filename: str = "pi_manager_zone1.log",
@@ -37,7 +39,7 @@ def setup_file_logger(
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = (log_dir / filename).resolve()
 
-    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(messages)s")
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
     fh = RotatingFileHandler(
         log_file,
@@ -111,7 +113,9 @@ def log_buffer_state(force: bool = False) -> None:
     global _last_buffer_log_ts
     now = time.time()
     if force or (now - _last_buffer_log_ts >= 30):
-        LOGGER.info(f"[PI MANAGER] Size= {len(publish_buffer)}, Max= MAX_BUFFERED_MSGs")
+        LOGGER.info(
+            f"[PI MANAGER] Buffer size={len(publish_buffer)}/{MAX_BUFFERED_MSGS}"
+        )
         _last_buffer_log_ts = now
 def utc_time_now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -208,7 +212,7 @@ class PiManager:
                 as7341_nir = int(self.spec.channel_nir)
             except Exception as e:
                 print(f"AS7341 read error: {e}")
-                LOGGER.info(f"AS7341 read error: {3}")
+                LOGGER.warning(f"[PI MANAGER] AS7341 read error: {e}")
                 as7341_415nm = None
                 as7341_445nm = None
                 as7341_480nm = None
@@ -282,10 +286,9 @@ def main():
             LOGGER.info(f"[MQTT] Flushed {flushed} buffered sensor messages. Remaining={len(publish_buffer)}")
     
     def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
-        print(
-            LOGGER.info(
+        LOGGER.info(
             f"[MQTT] Disconnected (flags={disconnect_flags}, reason_code={reason_code}). "
-            "Buffering until reconnect...")
+            "Buffering until reconnect..."
         )
     
     def on_message(client, userdata, msg):
@@ -293,7 +296,7 @@ def main():
         try:
             cmd = json.loads(raw)
         except Exception as e:
-            LOGGER.error(f"[CMD] invalid json:", raw)
+            LOGGER.error(f"[CMD] invalid json: {raw}")
             return
         
         ctype = str(cmd.get("type", "")).upper()

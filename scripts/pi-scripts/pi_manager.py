@@ -54,7 +54,9 @@ def flush_buffer(client:mqtt.Client) -> int:
     while publish_buffer and client.is_connected():
         msg = publish_buffer[0]
         try:
-            client.publish(msg["topic"], msg["payload"], qos=msg["qos"], retain=msg["retain"])
+            info = client.publish(msg["topic"], msg["payload"], qos=msg["qos"], retain=msg["retain"])
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                break # stop flushing, retry later
             publish_buffer.popleft()
             sent += 1
         except Exception:
@@ -323,6 +325,10 @@ def main():
     try:
         while not manager.shutdown_requested:
             if manager.run_active:
+                if client.is_connected() and len(publish_buffer) > 0:
+                    flushed = flush_buffer(client)
+                    if flushed:
+                        print(f"[MQTT] Flushed {flushed} buffered mssages during run. Remaining : {len(publish_buffer)}")
                 payload = manager.build_payload()
 
                 if client.is_connected():

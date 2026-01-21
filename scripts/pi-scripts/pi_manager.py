@@ -91,6 +91,7 @@ def buffer_message(topic: str, payload_str: str, qos: int = 1, retain: bool = Fa
         "retain": retain,
         "ts": time.time()
     })
+    log_buffer_state()
 
 def flush_buffer(client:mqtt.Client) -> int:
     sent = 0
@@ -106,6 +107,12 @@ def flush_buffer(client:mqtt.Client) -> int:
             break
     return sent
 
+def log_buffer_state(force: bool = False) -> None:
+    global _last_buffer_log_ts
+    now = time.time()
+    if force or (now - _last_buffer_log_ts >= 30):
+        LOGGER.info(f"[PI MANAGER] Size= {len(publish_buffer)}, Max= MAX_BUFFERED_MSGs")
+        _last_buffer_log_ts = now
 def utc_time_now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
@@ -172,6 +179,7 @@ class PiManager:
             try:
                 bh1750_lux = float(self.lux.lux)
             except Exception as e:
+                LOGGER.warning(f"[PI MANAGER] BH1750 read error: {e}")
                 print(f"BH1750 read error: {e}")
                 bh1750_lux = None
         #AS7341 spectral (raw counts)
@@ -200,6 +208,7 @@ class PiManager:
                 as7341_nir = int(self.spec.channel_nir)
             except Exception as e:
                 print(f"AS7341 read error: {e}")
+                LOGGER.info(f"AS7341 read error: {3}")
                 as7341_415nm = None
                 as7341_445nm = None
                 as7341_480nm = None
@@ -264,18 +273,19 @@ def main():
         raise RuntimeError("MQTT_USER / MQTT_PASSWORD missing in pi .env")
 
     def on_connect(client, userdata, flags, reason_code, properties=None):
-        print(f"[MQTT] Connected with reason_code: {reason_code}")
+        LOGGER.info(f"[MQTT] Connected with reason_code: {reason_code}")
         client.subscribe(CMD_TOPIC, qos=1)
         print(f"[MQTT] Subscribed to topic: {CMD_TOPIC}")
 
         flushed = flush_buffer(client)
         if flushed:
-            print(f"[MQTT] Flushed {flushed} buffered sensor messages. Remaining={len(publish_buffer)}")
+            LOGGER.info(f"[MQTT] Flushed {flushed} buffered sensor messages. Remaining={len(publish_buffer)}")
     
     def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
         print(
+            LOGGER.info(
             f"[MQTT] Disconnected (flags={disconnect_flags}, reason_code={reason_code}). "
-            "Buffering until reconnect..."
+            "Buffering until reconnect...")
         )
     
     def on_message(client, userdata, msg):
@@ -283,7 +293,7 @@ def main():
         try:
             cmd = json.loads(raw)
         except Exception as e:
-            print(f"[CMD] invalid json:", raw)
+            LOGGER.error(f"[CMD] invalid json:", raw)
             return
         
         ctype = str(cmd.get("type", "")).upper()
@@ -398,7 +408,7 @@ def main():
                         if info.rc != mqtt.MQTT_ERR_SUCCESS:
                             buffer_message(DATA_TOPIC, payload, qos=1, retain=False)
                     except Exception as e:
-                        print(f"[MQTT] Publish failed. Buffering. err: {e}")
+                        LOGGER.error(f"[MQTT] Publish failed. Buffering. err: {e}")
                         buffer_message(DATA_TOPIC, payload, qos=1, retain=False)
                 else:
                     buffer_message(DATA_TOPIC, payload, qos=1, retain=False)

@@ -44,7 +44,7 @@ def setup_file_logger(
         maxBytes=2*1024*1024,
         backupCount=5,
         encoding="utf-8",
-        delays=True
+        delay=True
     )
     fh.setFormatter(fmt)
     logger.addHandler(fh)

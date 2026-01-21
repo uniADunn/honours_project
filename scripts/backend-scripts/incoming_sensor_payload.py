@@ -548,8 +548,13 @@ if __name__ == "__main__":
         LOGGER.info("[FILELOCK] CONFIRMED SINGLETON (MUTEX HELD)")
         main()
     except RuntimeError as e:
+        msg = str(e)
         LOGGER.error(f"[FILELOCK] Runtime Error: {str(e)}")
+
+        if "Another instance is already runnning" in msg:
+            raise SystemExit(2)
+        
+        SystemExit(1)
         #print(f"[FILELOCK] RuntimeError: {str(e)}")
-        raise SystemExit(2)
     finally:
         lock.releaseLock()

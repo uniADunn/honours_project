@@ -179,14 +179,8 @@ def start_run(zone:str, run_id:str, sample_interval_s: int = 5):
         "run_id": run_id,
         "sample_interval_s": int(sample_interval_s)
     }
-    try:
-        LOGGER.info(f"[RUN SCHEDULER] Sending START command to zone: {zone}, run_id: {run_id}, sample_interval_s: {sample_interval_s}")
-        ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=8)
-    except Exception as e:
-        LOGGER.error(f"[RUN SCHEDULER] No ACK reply from pi for START command. {e}")
-        stop_run(zone, run_id)
-        return
-    
+    LOGGER.info(f"[RUN SCHEDULER] Sending START command to zone: {zone}, run_id: {run_id}, sample_interval_s: {sample_interval_s}")
+    ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=8)         
     #LOGGER.info(f"[RUN SCHEDULER] START command ACK received: {ack}")
     return ack
 
@@ -195,13 +189,9 @@ def stop_run(zone:str, run_id:str):
         "type": "STOP",
         "run_id": run_id
     }
-    try:
-        LOGGER.info(f"[RUN SCHEDULER] Sending STOP command to zone: {zone}, run_id: {run_id}")
-        ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=5)
-    except Exception as e:
-        LOGGER.error(f"[RUN SCHEDULER] No ACK reply from pi for STOP command. {e}")
-        stop_run(zone, run_id)
-        return
+    
+    LOGGER.info(f"[RUN SCHEDULER] Sending STOP command to zone: {zone}, run_id: {run_id}")
+    ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=5)
 
     #LOGGER.info(f"[RUN SCHEDULER] STOP command ACK received: {ack}")
     return ack
@@ -220,17 +210,18 @@ def main():
     create_run(conn, run_id, note="manual test start via scheduler script")
 
     #send start command to pi
-    ack = start_run(zone, run_id, sample_interval_s=5)
-    #print("[START] ack: ", ack)
-
-    if not ack or ack.get("status") != "OK":
-        set_run_status(conn, run_id, "FAILED", note=f"Start Failed, ack: {ack}")
-        LOGGER.error(f"[RUN SCHEDULER] Start run failed for run_id: {run_id}, ack: {ack}")
-        #print("[START] Failed; updated runs.status: FAILED")
+    try:
+        ack = start_run(zone, run_id, sample_interval_s=5)
+        if not ack or ack.get("status") != "OK":
+            set_run_status(conn, run_id, "FAILED", note=f"Start Failed, ack: {ack}")
+            LOGGER.error(f"[RUN SCHEDULER] Start run failed for run_id: {run_id}, ack: {ack}")
+            #print("[START] Failed; updated runs.status: FAILED")
+            return
+        LOGGER.info(f"[RUN SCHEDULER] Start run succeded for run_id: {run_id}, status: RUNNING")
+        set_run_status(conn, run_id, "RUNNING")
+    except TimeoutError as to:
+        LOGGER.error(f"[RUN SCHEDULER] timed out waiting for ack from pi. {to}")
         return
-    LOGGER.info(f"[RUN SCHEDULER] Start run succeded for run_id: {run_id}, status: RUNNING")
-    set_run_status(conn, run_id, "RUNNING")
-
     #print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
     #LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting 15 seconds to accumulate sensor readings...")
     run_duration = 600 # 10 mins (10 * 60 = 600)

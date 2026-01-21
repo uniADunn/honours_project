@@ -308,6 +308,7 @@ def db_insert_with_reconnect(userdata, row):
     for attempt in (1,2):
         try:
             userdata["db_cursor"].execute(INSERT_SQL, row)
+            LOGGER.info("[DB] sensor data inserted successfully")
             return True
         
         except Error as e:            
@@ -450,11 +451,8 @@ def on_message(client, userdata, msg):
        ok = db_insert_with_reconnect(userdata, row)
        if not ok:
         return
-        LOGGER.info(f"[MQTT] Inserted topic {msg.topic}, timestamp: {row['ts']}, source: {row['source']}, zone: {row['zone']}")
-        #print(f"[mqtt] inserted topic {msg.topic}, timestamp: {row['ts']}, source: {row['source']}, zone: {row['zone']}")
     except Error as e:
-        LOGGER.error(f"[MQTT] Insert failed: {e}\nrow: {row}")
-        #print(f"[mqtt] insert failed: {e} | row= {row}")
+        LOGGER.error(f"[DB] Insert failed: {e}\nrow: {row}")
 
 def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
     LOGGER.info(f"[MQTT] Disconnected with reason_code: {reason_code}, flags: {disconnect_flags}.")

@@ -12,12 +12,9 @@ from pathlib import Path
 import logging
 from logging.handlers import RotatingFileHandler
 
+# load .env variables
 load_dotenv()
-
-# ENV_PATH = Path(__file__).resolve().parents[2] / ".env"   # honours_project/.env
-# load_dotenv(dotenv_path=ENV_PATH, override=True)
-#print(f"[env] loaded: {ENV_PATH}")
-
+# set up logger
 def setup_logger() -> logging.Logger:
     repo_root = Path(__file__).resolve().parents[2]
     log_dir = repo_root / "logs"
@@ -50,9 +47,8 @@ def setup_logger() -> logging.Logger:
     
     logger.info(f"Logger initialized. log_file={log_file}")
     return logger
-
+# initialize logger
 LOGGER = setup_logger()
-
 
 # CONFIGURATION
 MQTT_HOST = os.getenv("MQTT_HOST", "127.0.0.1")
@@ -71,12 +67,7 @@ if not MYSQL_PASSWORD:
     LOGGER.error("MYSQL_PASSWORD is not set in backend .env")
     raise RuntimeError("MYSQL_PASSWORD is not set")
 
-# print(f"[cfg] MQTT_HOST={MQTT_HOST} MQTT_PORT={MQTT_PORT}")
-# print(f"[cfg] MYSQL_HOST={MYSQL_HOST} MYSQL_PORT={MYSQL_PORT} MYSQL_DB={MYSQL_DB} MYSQL_USER={MYSQL_USER}")
-
-
 # HELPER FUNCTIONS
-
 # topic naming
 def get_topics(zone: str):
     zone = str(zone).strip()
@@ -106,6 +97,29 @@ def create_run(conn, run_id:str, note:str = "created by run_light_schedule scrip
     cur.execute(sql_insert, (run_id, "STARTING", note))
     cur.close()
     LOGGER.info(f"[RUN SCHEDULER] Created run in database. run_id: {run_id}")
+
+# get the best country and year for entered crop
+def get_best_country_year_for_crop(conn, crop: str) -> tuple[str, int]:
+    crop_norm = crop.strip()
+    query = """
+            SELECT country, year
+            FROM ref_spectral_hourly
+            WHERE crop = %s
+            GROUP BY country, year
+            ORDER BY yield_t_ha DESC
+            LIMIT 1
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(query, (crop_norm))
+        row = cur.fetchone()
+        if not row:
+            LOGGER.info(f"No spectral profile found for crop: {crop_norm}")
+            raise ValueError(f"No spectral profile found for crop: {crop_norm}")
+        country, year = row
+        return str(country), int(year)
+    finally:
+        cur.close()
 
 # update run status
 def set_run_status(conn, run_id: str, status:str, note:str | None = None):
@@ -172,7 +186,7 @@ def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
     LOGGER.warning(f"[RUN SCHEDULER] ACK wait timed out after {timeout_s} seconds")
     return None
 
-# run operations: start/stop
+# run operations/commands: start/stop
 def start_run(zone:str, run_id:str, sample_interval_s: int = 5):
     payload = {
         "type": "START",
@@ -198,6 +212,8 @@ def stop_run(zone:str, run_id:str):
 
 # main flow
 def main():
+    # set crop selected
+    crop = "Tomatoes"
     # set zone
     zone = "zone1"
 

@@ -100,23 +100,24 @@ def create_run(conn, run_id:str, note:str = "created by run_light_schedule scrip
 
 # get the best country and year for entered crop
 def get_best_country_year_for_crop(conn, crop: str) -> tuple[str, int]:
+    LOGGER.info(f"[DB] Getting best country and year for: '{crop}'. Please wait...")
     crop_norm = crop.strip()
     query = """
-            SELECT country, year
+            SELECT country, year, yield_t_ha
             FROM ref_spectral_hourly
             WHERE crop = %s
-            GROUP BY country, year
+            GROUP BY country, year, yield_t_ha
             ORDER BY yield_t_ha DESC
             LIMIT 1
     """
     cur = conn.cursor()
     try:
-        cur.execute(query, (crop_norm))
+        cur.execute(query, (crop_norm,))
         row = cur.fetchone()
         if not row:
             LOGGER.info(f"No spectral profile found for crop: {crop_norm}")
             raise ValueError(f"No spectral profile found for crop: {crop_norm}")
-        country, year = row
+        country, year, _yield = row
         return str(country), int(year)
     finally:
         cur.close()
@@ -214,8 +215,12 @@ def stop_run(zone:str, run_id:str):
 def main():
     # set crop selected
     crop = "Tomatoes"
-    country, year = get_best_country_year_for_crop(db_connect(), crop)
-    print(f"[REF] crop: 'crop': returns country: {country}, year: {year}")
+    conn = db_connect()
+
+    
+    country, year = get_best_country_year_for_crop(conn, crop)
+    print(f"\n[REF] crop: '{crop}': returns country: {country}, year: {year}")
+    LOGGER.info(f"[REF] crop: '{crop}': best country: {country}, year achievied: {year}")
 
     # # set zone
     # zone = "zone1"
@@ -223,7 +228,6 @@ def main():
     # #generate a run id (later can get a user-entered one)
     # run_id = f"testing_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
 
-    # conn = db_connect()
 
     # create run row
     # create_run(conn, run_id, note="manual test start via scheduler script")

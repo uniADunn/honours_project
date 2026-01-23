@@ -101,7 +101,6 @@ def create_run(conn, run_id:str, note:str = "created by run_light_schedule scrip
 # get the best country and year for entered crop
 def get_best_country_year_for_crop(conn, crop: str) -> tuple[str, int]:
     LOGGER.info(f"[DB] Getting best country and year for: '{crop}'. Please wait...")
-    crop_norm = crop.strip()
     query = """
             SELECT country, year, yield_t_ha
             FROM ref_spectral_hourly
@@ -112,13 +111,44 @@ def get_best_country_year_for_crop(conn, crop: str) -> tuple[str, int]:
     """
     cur = conn.cursor()
     try:
-        cur.execute(query, (crop_norm,))
+        cur.execute(query, (crop,))
         row = cur.fetchone()
         if not row:
-            LOGGER.info(f"No spectral profile found for crop: {crop_norm}")
-            raise ValueError(f"No spectral profile found for crop: {crop_norm}")
+            LOGGER.info(f"No spectral profile found for crop: {crop}")
+            raise ValueError(f"No spectral profile found for crop: {crop}")
         country, year, _yield = row
         return str(country), int(year)
+    finally:
+        cur.close()
+
+def get_best_light_profile(conn, crop: str, country: str, year: int):
+    LOGGER.info(f"[DB] Fetching light profile for: country- '{country}', year- '{year}'")
+    print(f"[DB] Fetching light profile for: country- '{country}', year- '{year}'")
+    query = """
+            SELECT 
+                STR_TO_DATE(
+                    CONCAT(
+                        year, '-',
+                        LPAD(MO, 2, '0'), '-',
+                        LPAD(DY, 2, '0'), ' ',
+                        LPAD(HR, 2, '0'), ':00:00'),
+                    '%Y-%m-%d %H:%i:%s') AS ref_ts,
+                    year, mo, dy, hr,
+                    blue_W_m2_280-4000, green_W_m2_280_4000, red_W_m2_280_4000
+                    FROM ref_spectral_hourly
+                    WHERE crop = %s
+                        AND country = %s
+                        AND year = %s
+                    ORDER BY mo, dy, hr;
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(query, (crop, country, year,))
+        row = cur.fetch()
+        if not row:
+            LOGGER.info("No profile found matching")
+            raise ValueError("No profile found matching")
+        return row
     finally:
         cur.close()
 
@@ -214,13 +244,20 @@ def stop_run(zone:str, run_id:str):
 # main flow
 def main():
     # set crop selected
-    crop = "Tomatoes"
+    crop = "Tomatoes".strip()
     conn = db_connect()
 
-    
+    # get country and year for crop
     country, year = get_best_country_year_for_crop(conn, crop)
     print(f"\n[REF] crop: '{crop}': returns country: {country}, year: {year}")
     LOGGER.info(f"[REF] crop: '{crop}': best country: {country}, year achievied: {year}")
+
+    # get the yearly profile from ref_spectral_hourly for country and year
+    light_profile = get_best_light_profile(conn, country, year)
+    for i in range (len(0,light_profile)):
+        print(i)
+
+
 
     # # set zone
     # zone = "zone1"

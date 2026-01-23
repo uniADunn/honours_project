@@ -123,32 +123,35 @@ def get_best_country_year_for_crop(conn, crop: str) -> tuple[str, int]:
 
 def get_best_light_profile(conn, crop: str, country: str, year: int):
     LOGGER.info(f"[DB] Fetching light profile for: country- '{country}', year- '{year}'")
-    print(f"[DB] Fetching light profile for: country- '{country}', year- '{year}'")
+    #print(f"[DB] Fetching light profile for: country- '{country}', year- '{year}'")
     query = """
             SELECT 
-                STR_TO_DATE(
+                CAST(
                     CONCAT(
                         year, '-',
                         LPAD(MO, 2, '0'), '-',
                         LPAD(DY, 2, '0'), ' ',
-                        LPAD(HR, 2, '0'), ':00:00'),
-                    '%Y-%m-%d %H:%i:%s') AS ref_ts,
+                        LPAD(HR, 2, '0'), ':00:00')
+                    AS DATETIME(6)) AS ref_ts,
                     year, mo, dy, hr,
-                    blue_W_m2_280-4000, green_W_m2_280_4000, red_W_m2_280_4000
+                    blue_W_m2_280_4000, green_W_m2_280_4000, red_W_m2_280_4000
                     FROM ref_spectral_hourly
-                    WHERE crop = %s
-                        AND country = %s
+                    WHERE UPPER(crop) = UPPER(%s)
+                        AND UPPER(country) = UPPER(%s)
                         AND year = %s
                     ORDER BY mo, dy, hr;
     """
     cur = conn.cursor()
     try:
-        cur.execute(query, (crop, country, year,))
-        row = cur.fetch()
-        if not row:
+        cur.execute(query, (crop, country, year))
+        rows = cur.fetchall()
+        if not rows:
             LOGGER.info("No profile found matching")
             raise ValueError("No profile found matching")
-        return row
+        return rows
+    except Exception as e:
+        LOGGER.error(f"[DB] Failed fetching light profile because: {e}")
+        return 
     finally:
         cur.close()
 
@@ -249,13 +252,19 @@ def main():
 
     # get country and year for crop
     country, year = get_best_country_year_for_crop(conn, crop)
-    print(f"\n[REF] crop: '{crop}': returns country: {country}, year: {year}")
+    #print(f"\n[REF] crop: '{crop}': returns country: {country}, year: {year}")
     LOGGER.info(f"[REF] crop: '{crop}': best country: {country}, year achievied: {year}")
 
     # get the yearly profile from ref_spectral_hourly for country and year
-    light_profile = get_best_light_profile(conn, crop, country, year)
-    for i in range (len(0,light_profile)):
-        print(i)
+    try:
+        light_profile = get_best_light_profile(conn, crop, country, year)
+        first_ts = light_profile[0][0]
+        last_ts = light_profile[-1][0]
+        count = len(light_profile)
+        LOGGER.info(f"[RUN SCHEDULER] Retrieved light profile successfully. count: {count}, first_ts: {first_ts}, last_ts={last_ts}")
+    except Exception as e:
+        #LOGGER.error(f"[RUN SCHEDULER] Unable to retrieve light profile: Ending Run...")
+        raise Exception("[RUN SCHEDULER] Unable to retrieve light profile")
 
 
 
@@ -311,4 +320,10 @@ def main():
     #     conn.close()
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+        LOGGER.info("Schedule Completed. Ending run...")
+        SystemExit(0)
+    except Exception as e:
+        LOGGER.error(f"{e}")
+        SystemExit(0)

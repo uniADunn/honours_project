@@ -253,7 +253,7 @@ def main():
     LOGGER.info(f"[REF] crop: '{crop}': best country: {country}, year achievied: {year}")
 
     # get the yearly profile from ref_spectral_hourly for country and year
-    light_profile = get_best_light_profile(conn, country, year)
+    light_profile = get_best_light_profile(conn, crop, country, year)
     for i in range (len(0,light_profile)):
         print(i)
 

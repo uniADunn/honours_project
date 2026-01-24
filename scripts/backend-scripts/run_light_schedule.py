@@ -86,6 +86,13 @@ def db_connect():
         database = MYSQL_DB,
         autocommit= True
     )
+#slice helper
+def slice_profile(light_profile, start_ts:datetime, end_ts:datetime):
+    sliced = [row for row in light_profile if start_ts <= row[0] <= end_ts]
+    if not sliced:
+        LOGGER.warning(f"No profile rows found in slice {start_ts} -> {end_ts}")
+        raise ValueError(f"No profile rows found in slice {start_ts} -> {end_ts}")
+    return sliced
 
 # create a run
 def create_run(conn, run_id:str, note:str = "created by run_light_schedule script"):
@@ -309,6 +316,17 @@ def main():
         LOGGER.info(f"Run created successfully. run_id: {run_id}, crop: {crop}, country: {ref_country}, year: {ref_year}, total rows: {count}")
     except Exception as e:
         LOGGER.error(f"Unable to create run: {e}")
+
+    # hardcoded start and end dates for window slice from light profile
+    start_ts = datetime(2020, 6, 1, 6, 0, 0)
+    end_ts = datetime(2020, 6, 1, 20, 0, 0)
+
+    try:
+        slice_rows = slice_profile(light_profile, start_ts, end_ts)
+        LOGGER.info(f"[RUN SCHEDULER] slice successful start: {start_ts} -> {end_ts}")
+    except ValueError as ve:
+        LOGGER.error(f"[RUN SCHEDULER] slice was unsuccessful for start: {start_ts} -> {end_ts}")
+        raise ve
     # #send start command to pi
     # try:
     #     ack = start_run(zone, run_id, sample_interval_s=5)

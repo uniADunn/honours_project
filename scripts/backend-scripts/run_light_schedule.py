@@ -98,6 +98,29 @@ def create_run(conn, run_id:str, note:str = "created by run_light_schedule scrip
     cur.close()
     LOGGER.info(f"[RUN SCHEDULER] Created run in database. run_id: {run_id}")
 
+def create_run_with_metadata(conn, run_id:str, status:str, crop:str, ref_country:str, ref_year:int, schedule_start_ts, schedule_end_ts, sample_interval_s:int, zone:str, note:str | None = None)-> None:
+    if note is None:
+        sql_insert = """
+        INSERT INTO runs(run_id, created_ts, status, status_ts, crop, ref_country, ref_year, schedule_start_ts, schedule_end_ts, sample_interval_s, zone)
+        VALUES (%s, UTC_TIMESTAMP(6), %s, UTC_TIMESTAMP(6), %s, %s, %s, %s, %s, %s, %s)
+        """
+        args = (run_id, status, crop, ref_country, ref_year, schedule_start_ts, schedule_end_ts, sample_interval_s, zone)
+        LOGGER.info("no note")
+    else:
+        sql_insert = """
+            INSERT INTO runs(run_id, created_ts, status, status_ts, note, crop, ref_country, ref_year, schedule_start_ts, schedule_end_ts, sample_interval_s, zone)
+            VALUES (%s, UTC_TIMESTAMP(6), %s, UTC_TIMESTAMP(6), %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        args = (run_id, status, note, crop, ref_country, ref_year, schedule_start_ts, schedule_end_ts, sample_interval_s, zone)
+        LOGGER.info("got a note")
+    cur = conn.cursor()
+    try:
+        cur.execute(sql_insert, args)
+        conn.commit()
+    finally:
+        cur.close()
+        
+
 # get the best country and year for entered crop
 def get_best_country_year_for_crop(conn, crop: str) -> tuple[str, int]:
     LOGGER.info(f"[DB] Getting best country and year for: '{crop}'. Please wait...")
@@ -251,32 +274,34 @@ def main():
     conn = db_connect()
 
     # get country and year for crop
-    country, year = get_best_country_year_for_crop(conn, crop)
+    ref_country, ref_year = get_best_country_year_for_crop(conn, crop)
     #print(f"\n[REF] crop: '{crop}': returns country: {country}, year: {year}")
-    LOGGER.info(f"[REF] crop: '{crop}': best country: {country}, year achievied: {year}")
+    LOGGER.info(f"[REF] crop: '{crop}': best country: {ref_country}, year achievied: {ref_year}")
 
+    
     # get the yearly profile from ref_spectral_hourly for country and year
     try:
-        light_profile = get_best_light_profile(conn, crop, country, year)
-        first_ts = light_profile[0][0]
-        last_ts = light_profile[-1][0]
+        light_profile = get_best_light_profile(conn, crop, ref_country, ref_year)
+        schedule_start_ts = light_profile[0][0]
+        schedule_end_ts = light_profile[-1][0]
         count = len(light_profile)
-        LOGGER.info(f"[RUN SCHEDULER] Retrieved light profile successfully. count: {count}, first_ts: {first_ts}, last_ts={last_ts}")
+        LOGGER.info(f"[RUN SCHEDULER] Retrieved light profile successfully. count: {count}, first_ts: {schedule_start_ts}, last_ts={schedule_end_ts}")
     except Exception as e:
         #LOGGER.error(f"[RUN SCHEDULER] Unable to retrieve light profile: Ending Run...")
         raise Exception("[RUN SCHEDULER] Unable to retrieve light profile")
+    
+    # set zone
+    zone = "zone1"
+    sample_interval_s = 5
 
-
-
-    # # set zone
-    # zone = "zone1"
-
-    # #generate a run id (later can get a user-entered one)
-    # run_id = f"testing_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    #generate a run id (later can get a user-entered one)
+    run_id = f"testing_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
 
 
     # create run row
     # create_run(conn, run_id, note="manual test start via scheduler script")
+    
+    create_run_with_metadata(conn, run_id, "CREATED", crop, ref_country, ref_year, schedule_start_ts, schedule_end_ts, sample_interval_s, zone, note=f"manually created by run scheduler")
 
     # #send start command to pi
     # try:
@@ -325,5 +350,5 @@ if __name__ == "__main__":
         LOGGER.info("Schedule Completed. Ending run...")
         SystemExit(0)
     except Exception as e:
-        LOGGER.error(f"{e}")
+        LOGGER.error(f" FATAL: {e}")
         SystemExit(0)

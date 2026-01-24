@@ -271,15 +271,22 @@ def stop_run(zone:str, run_id:str):
 def main():
     # set crop selected
     crop = "Tomatoes".strip()
+    # set zone
+    zone = "zone1"
+    #set sample interval
+    sample_interval_s = 5
+    #get connection
     conn = db_connect()
+    # get the country and year that achieved highest yield for crop
+    try:
+        #return the reference country and year for giving crop
+        ref_country, ref_year = get_best_country_year_for_crop(conn, crop)
+        LOGGER.info(f"[REF] crop: '{crop}': best country: {ref_country}, year achievied: {ref_year}")
+    except Exception as e:
+        LOGGER.error(f"[REF] Unable to retrieve country and year for '{crop}'")
+        raise
 
-    # get country and year for crop
-    ref_country, ref_year = get_best_country_year_for_crop(conn, crop)
-    #print(f"\n[REF] crop: '{crop}': returns country: {country}, year: {year}")
-    LOGGER.info(f"[REF] crop: '{crop}': best country: {ref_country}, year achievied: {ref_year}")
-
-    
-    # get the yearly profile from ref_spectral_hourly for country and year
+    # retrieve the full year light profile for country, year and crop
     try:
         light_profile = get_best_light_profile(conn, crop, ref_country, ref_year)
         schedule_start_ts = light_profile[0][0]
@@ -290,19 +297,18 @@ def main():
         #LOGGER.error(f"[RUN SCHEDULER] Unable to retrieve light profile: Ending Run...")
         raise Exception("[RUN SCHEDULER] Unable to retrieve light profile")
     
-    # set zone
-    zone = "zone1"
-    sample_interval_s = 5
-
     #generate a run id (later can get a user-entered one)
     run_id = f"testing_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
 
 
-    # create run row
+    # create run row (skeleton function to create a run row)
     # create_run(conn, run_id, note="manual test start via scheduler script")
-    
-    create_run_with_metadata(conn, run_id, "CREATED", crop, ref_country, ref_year, schedule_start_ts, schedule_end_ts, sample_interval_s, zone, note=f"manually created by run scheduler")
-
+    #create a run row (includes meta data, e.g. crop, country year, schedule start, schedule end, etc)
+    try:
+        create_run_with_metadata(conn, run_id, "CREATED", crop, ref_country, ref_year, schedule_start_ts, schedule_end_ts, sample_interval_s, zone, note=f"manually created by run scheduler")
+        LOGGER.info(f"Run created successfully. run_id: {run_id}, crop: {crop}, country: {ref_country}, year: {ref_year}, total rows: {count}")
+    except Exception as e:
+        LOGGER.error(f"Unable to create run: {e}")
     # #send start command to pi
     # try:
     #     ack = start_run(zone, run_id, sample_interval_s=5)

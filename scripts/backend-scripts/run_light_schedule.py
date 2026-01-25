@@ -323,7 +323,7 @@ def main():
 
     try:
         slice_rows = slice_profile(light_profile, start_ts, end_ts)
-        LOGGER.info(f"[RUN SCHEDULER] slice successful start: {start_ts} -> {end_ts}")
+        LOGGER.info(f"[RUN SCHEDULER] slice successful start: {start_ts} -> {end_ts}. rows: {len(slice_rows)}")
     except ValueError as ve:
         LOGGER.error(f"[RUN SCHEDULER] slice was unsuccessful for start: {start_ts} -> {end_ts}")
         raise ve

@@ -327,46 +327,46 @@ def main():
     except ValueError as ve:
         LOGGER.error(f"[RUN SCHEDULER] slice was unsuccessful for start: {start_ts} -> {end_ts}")
         raise ve
-    # #send start command to pi
-    # try:
-    #     ack = start_run(zone, run_id, sample_interval_s=5)
-    #     if not ack or ack.get("status") != "OK":
-    #         set_run_status(conn, run_id, "FAILED", note=f"Start Failed, ack: {ack}")
-    #         LOGGER.error(f"[RUN SCHEDULER] Start run failed for run_id: {run_id}, ack: {ack}")
-    #         #print("[START] Failed; updated runs.status: FAILED")
-    #         return
-    #     LOGGER.info(f"[RUN SCHEDULER] Start run succeded for run_id: {run_id}, status: RUNNING")
-    #     set_run_status(conn, run_id, "RUNNING")
-    # except TimeoutError as to:
-    #     LOGGER.error(f"[RUN SCHEDULER] timed out waiting for ack from pi. {to}")
-    #     return
-    # #print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
-    # #LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting 15 seconds to accumulate sensor readings...")
-    # run_duration = 600 # 10 mins (10 * 60 = 600)
-    # try:
-    #     time.sleep(run_duration) # simulate run for 10 minutes 10 * 60 = 600 seconds)
-    #     ack2 = stop_run(zone, run_id)
-    #     LOGGER.info(f"[RUN SCHEDULER]  Stop ACK received. {ack2}")
-    #     #print("[STOP] ack: ", ack2)
-    #     set_run_status(conn, run_id, "COMPLETED")
-    #     LOGGER.info(f"[RUN SCHEDULER] Run completed successfully for run_id: {run_id}, status: COMPLETED")
-    # except KeyboardInterrupt:
-    #     LOGGER.info("[RUN SCHEDULER] Keyboard Interrupt detected, Stopping the run...")
-    #     #print("Keyboard Interrupt detected, manually stopping the run...")
-    #     ack2 = stop_run(zone, run_id)
-    #     #print("[STOP] ack: ", ack2)
-    #     set_run_status(conn, run_id, "STOPPED", note="Stopped via Keyboard Interrupt")
-    #     LOGGER.info(f"[RUN SCHEDULER] Run stopped via Keyboard Interrupt for run_id: {run_id}, status: STOPPED")
-    #     #print("[RUN] Stopped and status updated: STOPPED")
-    # except Exception as e:
-    #     LOGGER.error(f"[RUN SCHEDULER] Exception occurred: {e}, stopping the run...")
-    #     #print(f"[RUN] Exception occurred: {e}, stopping the run...")
-    #     ack2 = stop_run(zone, run_id)
-    #     #print("[STOP] ack: ", ack2)
-    #     set_run_status(conn, run_id, "FAILED", note=f"Exception occurred during run: {e}")
-    #     LOGGER.info(f"[RUN SCHEDULER] Run Failed due to an exception for run_id: {run_id}, status: FAILED")
-    # finally:
-    #     conn.close()
+    #send start command to pi
+    try:
+        ack = start_run(zone, run_id, sample_interval_s=5)
+        if not ack or ack.get("status") != "OK":
+            set_run_status(conn, run_id, "FAILED", note=f"Start Failed, ack: {ack}")
+            LOGGER.error(f"[RUN SCHEDULER] Start run failed for run_id: {run_id}, ack: {ack}")
+            #print("[START] Failed; updated runs.status: FAILED")
+            return
+        LOGGER.info(f"[RUN SCHEDULER] Start run succeded for run_id: {run_id}, status: RUNNING")
+        set_run_status(conn, run_id, "RUNNING")
+    except TimeoutError as to:
+        LOGGER.error(f"[RUN SCHEDULER] timed out waiting for ack from pi. {to}")
+        return
+    #print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
+    #LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting 15 seconds to accumulate sensor readings...")
+    run_duration = 60 # 10 mins (10 * 60 = 600)
+    try:
+        time.sleep(run_duration) # simulate run for 10 minutes 10 * 60 = 600 seconds)
+        ack2 = stop_run(zone, run_id)
+        LOGGER.info(f"[RUN SCHEDULER]  Stop ACK received. {ack2}")
+        #print("[STOP] ack: ", ack2)
+        set_run_status(conn, run_id, "COMPLETED")
+        LOGGER.info(f"[RUN SCHEDULER] Run completed successfully for run_id: {run_id}, status: COMPLETED")
+    except KeyboardInterrupt:
+        LOGGER.info("[RUN SCHEDULER] Keyboard Interrupt detected, Stopping the run...")
+        #print("Keyboard Interrupt detected, manually stopping the run...")
+        ack2 = stop_run(zone, run_id)
+        #print("[STOP] ack: ", ack2)
+        set_run_status(conn, run_id, "STOPPED", note="Stopped via Keyboard Interrupt")
+        LOGGER.info(f"[RUN SCHEDULER] Run stopped via Keyboard Interrupt for run_id: {run_id}, status: STOPPED")
+        #print("[RUN] Stopped and status updated: STOPPED")
+    except Exception as e:
+        LOGGER.error(f"[RUN SCHEDULER] Exception occurred: {e}, stopping the run...")
+        #print(f"[RUN] Exception occurred: {e}, stopping the run...")
+        ack2 = stop_run(zone, run_id)
+        #print("[STOP] ack: ", ack2)
+        set_run_status(conn, run_id, "FAILED", note=f"Exception occurred during run: {e}")
+        LOGGER.info(f"[RUN SCHEDULER] Run Failed due to an exception for run_id: {run_id}, status: FAILED")
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     try:

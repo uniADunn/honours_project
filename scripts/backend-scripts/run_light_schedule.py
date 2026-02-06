@@ -1,7 +1,7 @@
 import os
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
 import mysql.connector
@@ -86,6 +86,25 @@ def db_connect():
         database = MYSQL_DB,
         autocommit= True
     )
+
+#parse user entered date time (mm-dd hh:00)
+def parse_window_dates_input(year:int)-> tuple[datetime, datetime]:
+    start_date_raw = input(f"enter start date and hour (mm-dd hh) for year: {year}-")
+    end_date_raw = input(f"enter end date and hour (mm-dd hh) for year: {year}-")
+
+    try:
+        start_ts = datetime.strptime(f"{year}-{start_date_raw}:00:00", "%Y-%m-%d %H:%M:%S")
+        end_ts = datetime.strptime(f"{year}-{end_date_raw}:00:00", "%Y-%m-%d %H:%M:%S")
+    except ValueError as e:
+        raise ValueError(f"bad input format. use MM-DD HH (e.g. 06-01 6). Details: {e}")
+    
+    if end_ts <= start_ts:
+        raise ValueError(f"End ts mus be after start ts. start: {start_ts}, end: {end_ts}")
+    
+    return start_ts, end_ts
+
+
+
 #slice helper
 def slice_profile(light_profile, start_ts:datetime, end_ts:datetime):
     sliced = [row for row in light_profile if start_ts <= row[0] <= end_ts]
@@ -94,16 +113,28 @@ def slice_profile(light_profile, start_ts:datetime, end_ts:datetime):
         raise ValueError(f"No profile rows found in slice {start_ts} -> {end_ts}")
     return sliced
 
+
+
+# get the duration of the slice
+def get_duration_of_slice(start, end)-> int:
+    duration = end - start
+    duration_in_seconds = duration.total_seconds()
+    if duration_in_seconds < 0:
+        raise ValueError(f"Invalid Window: start: {start}, end: {end}, seconds: {duration_in_seconds}")
+    return int(duration_in_seconds)
+
 # create a run
-def create_run(conn, run_id:str, note:str = "created by run_light_schedule script"):
-    sql_insert = """
-    INSERT INTO runs(run_id, created_ts, status, status_ts, note)
-    VALUES (%s, UTC_TIMESTAMP(6), %s, UTC_TIMESTAMP(6), %s)
-    """
-    cur = conn.cursor()
-    cur.execute(sql_insert, (run_id, "STARTING", note))
-    cur.close()
-    LOGGER.info(f"[RUN SCHEDULER] Created run in database. run_id: {run_id}")
+
+# def create_run(conn, run_id:str, note:str = "created by run_light_schedule script"):
+#     """deprecated method to create a run in the runs table"""
+#     sql_insert = """
+#     INSERT INTO runs(run_id, created_ts, status, status_ts, note)
+#     VALUES (%s, UTC_TIMESTAMP(6), %s, UTC_TIMESTAMP(6), %s)
+#     """
+#     cur = conn.cursor()
+#     cur.execute(sql_insert, (run_id, "STARTING", note))
+#     cur.close()
+#     LOGGER.info(f"[RUN SCHEDULER] Created run in database. run_id: {run_id}")
 
 def create_run_with_metadata(conn, run_id:str, status:str, crop:str, ref_country:str, ref_year:int, schedule_start_ts, schedule_end_ts, sample_interval_s:int, zone:str, note:str | None = None)-> None:
     if note is None:
@@ -318,15 +349,24 @@ def main():
         LOGGER.error(f"Unable to create run: {e}")
 
     # hardcoded start and end dates for window slice from light profile
-    start_ts = datetime(2020, 6, 1, 6, 0, 0)
-    end_ts = datetime(2020, 6, 1, 20, 0, 0)
+    # start_ts = datetime(2020, 6, 1, 6, 0, 0)
+    # end_ts = datetime(2020, 6, 1, 20, 0, 0)
+
+    #get date input from user
+    try:
+        start_ts, end_ts = parse_window_dates_input(ref_year)
+    except Exception as e:
+        pass
 
     try:
         slice_rows = slice_profile(light_profile, start_ts, end_ts)
         LOGGER.info(f"[RUN SCHEDULER] slice successful start: {start_ts} -> {end_ts}. rows: {len(slice_rows)}")
+        duration_in_seconds = get_duration_of_slice(start_ts, end_ts)
+        LOGGER.info(f"the duration of time slice in seconds: {duration_in_seconds}s")
     except ValueError as ve:
         LOGGER.error(f"[RUN SCHEDULER] slice was unsuccessful for start: {start_ts} -> {end_ts}")
         raise ve
+    
     #send start command to pi
     try:
         ack = start_run(zone, run_id, sample_interval_s=5)
@@ -340,11 +380,11 @@ def main():
     except TimeoutError as to:
         LOGGER.error(f"[RUN SCHEDULER] timed out waiting for ack from pi. {to}")
         return
-    #print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
-    #LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting 15 seconds to accumulate sensor readings...")
-    run_duration = 60 # 10 mins (10 * 60 = 600)
+    print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
+    LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting {duration_in_seconds} seconds to accumulate sensor readings...")
+    
     try:
-        time.sleep(run_duration) # simulate run for 10 minutes 10 * 60 = 600 seconds)
+        time.sleep(duration_in_seconds)
         ack2 = stop_run(zone, run_id)
         LOGGER.info(f"[RUN SCHEDULER]  Stop ACK received. {ack2}")
         #print("[STOP] ack: ", ack2)

@@ -131,18 +131,6 @@ def get_duration_of_slice(start, end)-> int:
     return int(duration_in_seconds)
 
 # create a run
-
-# def create_run(conn, run_id:str, note:str = "created by run_light_schedule script"):
-#     """deprecated method to create a run in the runs table"""
-#     sql_insert = """
-#     INSERT INTO runs(run_id, created_ts, status, status_ts, note)
-#     VALUES (%s, UTC_TIMESTAMP(6), %s, UTC_TIMESTAMP(6), %s)
-#     """
-#     cur = conn.cursor()
-#     cur.execute(sql_insert, (run_id, "STARTING", note))
-#     cur.close()
-#     LOGGER.info(f"[RUN SCHEDULER] Created run in database. run_id: {run_id}")
-
 def create_run_with_metadata(conn, run_id:str, status:str, crop:str, ref_country:str, ref_year:int, schedule_start_ts, schedule_end_ts, sample_interval_s:int, zone:str, note:str | None = None)-> None:
     if note is None:
         sql_insert = """

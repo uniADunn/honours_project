@@ -89,21 +89,28 @@ def db_connect():
 
 #parse user entered date time (mm-dd hh:00)
 def parse_window_dates_input(year:int)-> tuple[datetime, datetime]:
-    start_date_raw = input(f"enter start date and hour (mm-dd hh) for year: {year}-")
-    end_date_raw = input(f"enter end date and hour (mm-dd hh) for year: {year}-")
-
-    try:
-        start_ts = datetime.strptime(f"{year}-{start_date_raw}:00:00", "%Y-%m-%d %H:%M:%S")
-        end_ts = datetime.strptime(f"{year}-{end_date_raw}:00:00", "%Y-%m-%d %H:%M:%S")
-    except ValueError as e:
-        raise ValueError(f"bad input format. use MM-DD HH (e.g. 06-01 6). Details: {e}")
+    for attempts in range(1, 6):
+        start_date_raw = input(f"enter start date and hour (mm-dd hh) for year: {year}-")
+        end_date_raw = input(f"enter end date and hour (mm-dd hh) for year: {year}-")
     
-    if end_ts <= start_ts:
-        raise ValueError(f"End ts mus be after start ts. start: {start_ts}, end: {end_ts}")
-    
-    return start_ts, end_ts
+        try:
+            start_ts = datetime.strptime(f"{year}-{start_date_raw}:00:00", "%Y-%m-%d %H:%M:%S")
+            end_ts = datetime.strptime(f"{year}-{end_date_raw}:00:00", "%Y-%m-%d %H:%M:%S")
 
+            if end_ts <= start_ts:
+                raise ValueError(f"End ts must be after start ts. start: {start_ts}, end: {end_ts}")
 
+            return start_ts, end_ts
+        except ValueError as e:
+            remaining = 5 - attempts
+            print(
+                f"Bad input. use MM-DD HH (e.g 06-01 13) "
+                f"Attempt {attempts}/5 "
+                f"{'Remaining: ' + str(remaining) if remaining else 'No attempts left '}\n"
+                f"Details: {e}\n"
+            )
+    raise ValueError("Invalid date input aborting...")
+            
 
 #slice helper
 def slice_profile(light_profile, start_ts:datetime, end_ts:datetime):
@@ -309,12 +316,17 @@ def stop_run(zone:str, run_id:str):
 def main():
     # set crop selected
     crop = "Tomatoes".strip()
+    #crop = "ch"
     # set zone
     zone = "zone1"
     #set sample interval
     sample_interval_s = 5
+    print()
+
+    LOGGER.info(f"[SHCEDULER] Crop hardcoded: {crop}, zone hardcoded: {zone}, sample interval hardcoded: {sample_interval_s}")
     #get connection
     conn = db_connect()
+
     # get the country and year that achieved highest yield for crop
     try:
         #return the reference country and year for giving crop
@@ -327,36 +339,27 @@ def main():
     # retrieve the full year light profile for country, year and crop
     try:
         light_profile = get_best_light_profile(conn, crop, ref_country, ref_year)
+
         schedule_start_ts = light_profile[0][0]
         schedule_end_ts = light_profile[-1][0]
+        
         count = len(light_profile)
-        LOGGER.info(f"[RUN SCHEDULER] Retrieved light profile successfully. count: {count}, first_ts: {schedule_start_ts}, last_ts={schedule_end_ts}")
+        #LOGGER.info(f"[RUN SCHEDULER] Retrieved light profile successfully. count: {count}, first_ts: {schedule_start_ts}, last_ts={schedule_end_ts}")
     except Exception as e:
         #LOGGER.error(f"[RUN SCHEDULER] Unable to retrieve light profile: Ending Run...")
         raise Exception("[RUN SCHEDULER] Unable to retrieve light profile")
     
-    #generate a run id (later can get a user-entered one)
-    run_id = f"testing_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    print()
+    LOGGER.info(f"[SCHEDULER] Retrieved light profile: count: {count}, first_ts: {schedule_start_ts}, last_ts={schedule_end_ts}")
 
-
-    # create run row (skeleton function to create a run row)
-    # create_run(conn, run_id, note="manual test start via scheduler script")
-    #create a run row (includes meta data, e.g. crop, country year, schedule start, schedule end, etc)
-    try:
-        create_run_with_metadata(conn, run_id, "CREATED", crop, ref_country, ref_year, schedule_start_ts, schedule_end_ts, sample_interval_s, zone, note=f"manually created by run scheduler")
-        LOGGER.info(f"Run created successfully. run_id: {run_id}, crop: {crop}, country: {ref_country}, year: {ref_year}, total rows: {count}")
-    except Exception as e:
-        LOGGER.error(f"Unable to create run: {e}")
-
-    # hardcoded start and end dates for window slice from light profile
-    # start_ts = datetime(2020, 6, 1, 6, 0, 0)
-    # end_ts = datetime(2020, 6, 1, 20, 0, 0)
-
-    #get date input from user
+    # #get date input from user
     try:
         start_ts, end_ts = parse_window_dates_input(ref_year)
     except Exception as e:
-        pass
+        raise
+    
+    print()
+    LOGGER.info(f"[SCHEDULER] got start and end dates from user: start: {start_ts}, end: {end_ts}")
 
     try:
         slice_rows = slice_profile(light_profile, start_ts, end_ts)
@@ -366,6 +369,21 @@ def main():
     except ValueError as ve:
         LOGGER.error(f"[RUN SCHEDULER] slice was unsuccessful for start: {start_ts} -> {end_ts}")
         raise ve
+    
+    # for row in range(0, len(slice_rows)):
+    #     print("\n", slice_rows[row])
+
+    # #generate a run id (later can get a user-entered one)
+    run_id = f"testing_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+
+
+    # create a run row (includes meta data, e.g. crop, country year, schedule start, schedule end, etc)
+    try:
+        create_run_with_metadata(conn, run_id, "CREATED", crop, ref_country, ref_year, schedule_start_ts, schedule_end_ts, sample_interval_s, zone, note=f"created by run scheduler")
+        LOGGER.info(f"Run created successfully. run_id: {run_id}, crop: {crop}, country: {ref_country}, year: {ref_year}, total rows: {len(slice_rows)}")
+    except Exception as e:
+        LOGGER.error(f"Unable to create run: {e}")
+
     
     #send start command to pi
     try:

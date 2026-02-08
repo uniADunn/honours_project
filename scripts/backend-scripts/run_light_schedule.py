@@ -277,16 +277,57 @@ def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
     return None
 
 # run operations/commands: start/stop
-def start_run(zone:str, run_id:str, sample_interval_s: int = 5):
+# def start_run(zone:str, run_id:str, sample_interval_s: int = 5):
+#     payload = {
+#         "type": "START",
+#         "run_id": run_id,
+#         "sample_interval_s": int(sample_interval_s)
+#     }
+#     LOGGER.info(f"[RUN SCHEDULER] Sending START command to zone: {zone}, run_id: {run_id}, sample_interval_s: {sample_interval_s}")
+#     ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=8)         
+#     #LOGGER.info(f"[RUN SCHEDULER] START command ACK received: {ack}")
+#     return ack
+
+def start_run(
+        zone:str,
+        run_id:str,
+        sample_interval_s: int,
+        run_start_ts: datetime,
+        ref_meta: dict,
+        ref_start_ts: datetime,
+        targets_by_slot: list,
+        compare_mode: str = "cumalitive",
+        decision_policy:dict | None = None):
+    if decision_policy is None:
+        decision_policy = {
+            "tolerance_pct": 5.0,
+            "min_samples_before_decision": 6
+        }
+
     payload = {
         "type": "START",
         "run_id": run_id,
-        "sample_interval_s": int(sample_interval_s)
+        "sample_interval_s": int(sample_interval_s),
+
+        #time anchors
+        "run_start_ts_utc": run_start_ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "ref_start_ts_utc": ref_start_ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+
+        #metadata
+        "ref_meta": ref_meta, # e.g. {"crop": "tomatoes", "country": "Belgium", "year": 2020}
+
+        #comparison details
+        "compare_mode": compare_mode, # cumulative
+        "decision_policy": decision_policy,
+
+        #target sequence for the run
+        #each element corresponds to slot index = floor(elapsed_s/3600)
+        "targets_by_slot": targets_by_slot
     }
-    LOGGER.info(f"[RUN SCHEDULER] Sending START command to zone: {zone}, run_id: {run_id}, sample_interval_s: {sample_interval_s}")
-    ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=8)         
-    #LOGGER.info(f"[RUN SCHEDULER] START command ACK received: {ack}")
+    LOGGER.info(f"[SCHEDULER] Sending START  command to zone: {zone}, run_id: {run_id}")
+    ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s = 8)
     return ack
+    
 
 def stop_run(zone:str, run_id:str):
     payload = {

@@ -367,7 +367,7 @@ def main():
 
     # create a run row (includes meta data, e.g. crop, country year, schedule start, schedule end, etc)
     try:
-        create_run_with_metadata(conn, run_id, "CREATED", crop, ref_country, ref_year, schedule_start_ts, schedule_end_ts, sample_interval_s, zone, note=f"created by run scheduler")
+        create_run_with_metadata(conn, run_id, "CREATED", crop, ref_country, ref_year, start_ts, end_ts, sample_interval_s, zone, note=f"created by run scheduler")
         LOGGER.info(f"Run created successfully. run_id: {run_id}, crop: {crop}, country: {ref_country}, year: {ref_year}, total rows: {len(slice_rows)}")
     except Exception as e:
         LOGGER.error(f"Unable to create run: {e}")

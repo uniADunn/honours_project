@@ -354,6 +354,7 @@ def main():
         LOGGER.info(f"[RUN SCHEDULER] slice successful start: {start_ts} -> {end_ts}. rows: {len(slice_rows)}")
         duration_in_seconds = get_duration_of_slice(start_ts, end_ts)
         LOGGER.info(f"the duration of time slice in seconds: {duration_in_seconds}s")
+        LOGGER.info(f"the duration of time slice with 5 seconds added on: seconds: {duration_in_seconds + 5}s")
     except ValueError as ve:
         LOGGER.error(f"[RUN SCHEDULER] slice was unsuccessful for start: {start_ts} -> {end_ts}")
         raise ve

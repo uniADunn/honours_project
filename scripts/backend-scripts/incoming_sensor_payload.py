@@ -185,60 +185,6 @@ if not MYSQL_PASSWORD:
 LOGGER.info(f"[CONFIG] Reference Irradiance E_ref = {E_REF_W_M2} W/m2")
 
 
-# class SingleInstanceLock:
-#     def __init__(self, lock_path: Path):
-#         self.lock_path = lock_path
-#         self.fp = None
-
-#     def acquireLock(self):
-#         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-#         self.fp = open(self.lock_path, 'a+', encoding='utf-8')
-
-#         self.fp.seek(0)
-
-#         try:
-#             if os.name == 'nt':
-#                 import msvcrt
-#                 # lock 1 byte (non-blocking)
-#                 msvcrt.locking(self.fp.fileno(), msvcrt.LK_NBLCK, 1)
-#                 LOGGER.info(f"Acquired lock on {self.lock_path}")
-#             else:
-#                 import fcntl
-#                 fcntl.flock(self.fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-#         except Exception:
-#             LOGGER.error(f"Failed to acquire lock on {self.lock_path}\nAnother instance is already running.")
-#             raise RuntimeError(f"Another instance is already running (lock: {self.lock_path})")
-        
-#         try:
-#             self.fp.seek(0)
-#             self.fp.truncate()
-#             self.fp.write(str(os.getpid()))
-#             self.fp.flush()
-#             LOGGER.info(f"Wrote PID {os.getpid()} to lock file {self.lock_path}")
-#         except Exception:
-#             pass
-
-#     def releaseLock(self):
-#         if not self.fp:
-#             return
-#         try:
-#             if os.name == 'nt':
-#                 import msvcrt
-#                 self.fp.seek(0)
-#                 msvcrt.locking(self.fp.fileno(), msvcrt.LK_UNLCK, 1)
-#                 LOGGER.info(f"Released lock on {self.lock_path}")
-#             else:
-#                 import fcntl
-#                 fcntl.flock(self.fp.fileno(), fcntl.LOCK_UN)
-#                 LOGGER.info(f"Released lock on self.lock_path")
-#         except Exception:
-#             pass
-#         try:
-#             self.fp.close()
-#         except Exception:
-#             pass
-#         self.fp = None
-
 def wm2_from_counts_ref(counts:int | None, wl_nm: int, gain_meas: float| None, it_meas_ms: float | None):
     """
     Convert as7341 counts to an irradiance proxy (W/m2) using datasheet reference counts.

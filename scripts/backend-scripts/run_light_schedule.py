@@ -296,7 +296,7 @@ def start_run(
         ref_meta: dict,
         ref_start_ts: datetime,
         targets_by_slot: list,
-        compare_mode: str = "cumalitive",
+        compare_mode: str,
         decision_policy:dict | None = None):
     if decision_policy is None:
         decision_policy = {
@@ -327,7 +327,36 @@ def start_run(
     LOGGER.info(f"[SCHEDULER] Sending START  command to zone: {zone}, run_id: {run_id}")
     ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s = 8)
     return ack
-    
+
+def build_target_slots(sliced_rows: list[tuple])->list[dict]:
+    """
+    sliced rows are tuples from get_best_light_profile() method
+    ref_ts = index 0
+    blue_W_m2_280_4000 = index 5
+    green_W_m2_280_4000 = index 6
+    red_W_m2_280_4000 = index 7
+    """
+    targets: list[dict] = []
+
+    for i, r in enumerate(sliced_rows):
+        ref_ts: datetime = r[0]
+        blue = float(r[5])
+        green = float(r[6])
+        red = float(r[7])
+        total = blue + green + red
+
+
+        targets.append({
+            "slot": i,
+            "ref_ts": ref_ts.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),
+            "target":{
+                "blue": blue,
+                "green": green,
+                "red": red,
+                "total": total
+            }
+        })
+    return targets
 
 def stop_run(zone:str, run_id:str):
     payload = {
@@ -417,22 +446,44 @@ def main():
     
     #send start command to pi
     try:
-        ack = start_run(zone, run_id, sample_interval_s=5)
+        #build targets slots from sliced rows
+        targets_slots = build_target_slots(slice_rows)
+
+        #anchor for slot time
+        run_start_ts = datetime.now(timezone.utc)
+
+        ref_meta = {"crop": crop, "country": ref_country, "year": ref_year}
+        ref_start_ts = start_ts.replace(tzinfo=timezone.utc)
+        ack = start_run(
+            zone, 
+            run_id,
+            sample_interval_s,
+            run_start_ts,
+            ref_meta,
+            ref_start_ts,
+            targets_slots,
+            compare_mode="cumalative",
+            decision_policy={"tolerance_pct": 5.0, "min_samples_before_decision": 6},
+               
+        )
         if not ack or ack.get("status") != "OK":
             set_run_status(conn, run_id, "FAILED", note=f"Start Failed, ack: {ack}")
             LOGGER.error(f"[RUN SCHEDULER] Start run failed for run_id: {run_id}, ack: {ack}")
             #print("[START] Failed; updated runs.status: FAILED")
             return
+        
         LOGGER.info(f"[RUN SCHEDULER] Start run succeded for run_id: {run_id}, status: RUNNING")
         set_run_status(conn, run_id, "RUNNING")
+
     except TimeoutError as to:
         LOGGER.error(f"[RUN SCHEDULER] timed out waiting for ack from pi. {to}")
         return
+    
     print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
     LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting {duration_in_seconds} seconds to accumulate sensor readings...")
     
     try:
-        time.sleep(duration_in_seconds)
+        time.sleep(duration_in_seconds + 5)
         ack2 = stop_run(zone, run_id)
         LOGGER.info(f"[RUN SCHEDULER]  Stop ACK received. {ack2}")
         #print("[STOP] ack: ", ack2)

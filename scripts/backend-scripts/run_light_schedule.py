@@ -297,7 +297,9 @@ def start_run(
         ref_start_ts: datetime,
         targets_by_slot: list,
         compare_mode: str,
-        decision_policy:dict | None = None):
+        decision_policy:dict | None = None
+    ):
+    
     if decision_policy is None:
         decision_policy = {
             "tolerance_pct": 5.0,
@@ -310,8 +312,8 @@ def start_run(
         "sample_interval_s": int(sample_interval_s),
 
         #time anchors
-        "run_start_ts_utc": run_start_ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "ref_start_ts_utc": ref_start_ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "run_start_ts": run_start_ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "ref_start_ts": ref_start_ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
 
         #metadata
         "ref_meta": ref_meta, # e.g. {"crop": "tomatoes", "country": "Belgium", "year": 2020}
@@ -432,7 +434,7 @@ def main():
     # for row in range(0, len(slice_rows)):
     #     print("\n", slice_rows[row])
 
-    # #generate a run id (later can get a user-entered one)
+    # #generate a run id
     run_id = f"testing_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
 
 

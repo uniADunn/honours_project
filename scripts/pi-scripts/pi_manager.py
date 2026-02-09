@@ -317,7 +317,15 @@ class PiManager:
         return json.dumps(payload), raw_channels
     
     def ack(self, client: mqtt.Client, msg: dict):
-        client.publish(ACK_TOPIC, json.dumps(msg), qos=1, retain=False)
+        payload = json.dumps(msg)
+        if not client.is_connected():
+            LOGGER.error(f"[ACK] Not connected. cannot publish ack: payload: {payload}")
+            return
+        info = client.publish(ACK_TOPIC, payload, qos=1, retain = False)
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            LOGGER.error(f"[ACK] Publish failed rc={info.rc}. payload: {payload}")
+        else:
+            LOGGER.info(f"[ACK] published to {ACK_TOPIC}: payload: {payload}")
 
 def main():
     manager = PiManager()
@@ -358,6 +366,7 @@ def main():
         run_id = cmd.get("run_id")
 
         if ctype == "START":
+            LOGGER.info(f"[PI MANAGER] Received START command: {run_id}, payload: {cmd}")
             if not run_id:
                 manager.ack(client, {"type": "READY", "status": "ERROR", "detail": "missing run_id"})
                 return
@@ -367,7 +376,7 @@ def main():
             try:
                 manager.run_start_ts = parse_iso_utc(cmd.get("run_start_ts"))
                 targets = cmd.get("targets_by_slot")
-                manager.decision_policy = cmd.get("decision_policy") or {"tolerance_pct": 5.0, "min_samples_for_decision": 3}
+                manager.decision_policy = cmd.get("decision_policy") or {"tolerance_pct": 5.0, "min_samples_before_decision": 3}
                 if not isinstance(targets, list) or len(targets) == 0:
                     manager.ack(client, {
                         "type": "READY",

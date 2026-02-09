@@ -18,6 +18,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+import shared.spectral_conversion as spectral_conversion
+from shared.spectral_conversion import wm2_from_counts_ref, safe_sum
 load_dotenv()
 
 _last_buffer_log_ts = 0.0
@@ -510,11 +512,23 @@ def main():
                     tgt_green = float(tgt.get("green", 0))
                     tgt_red = float(tgt.get("red", 0))
 
-                    #temp measured values from raw counts
-                    measured_blue = float(raw_channels.get("as7341_415nm") or 0) + float(raw_channels.get("as7341_445nm") or 0) + float(raw_channels.get("as7341_480nm") or 0)
-                    measured_green = float(raw_channels.get("as7341_515nm") or 0) + float(raw_channels.get("as7341_555nm") or 0) + float(raw_channels.get("as7341_590nm") or 0)
-                    measured_red = float(raw_channels.get("as7341_630nm") or 0) + float(raw_channels.get("as7341_680nm") or 0)
+                    bands = wm2_from_counts_ref(
+                        c415 = raw_channels.get("as7341_415nm"),
+                        c445 = raw_channels.get("as7341_445nm"),
+                        c480 = raw_channels.get("as7341_480nm"),
+                        c515 = raw_channels.get("as7341_515nm"),
+                        c555 = raw_channels.get("as7341_555nm"),
+                        c590 = raw_channels.get("as7341_590nm"),
+                        c630 = raw_channels.get("as7341_630nm"),
+                        c680 = raw_channels.get("as7341_680nm"),
+                        gain_meas = float(raw_channels.get("as7341_gain") or AS7341_GAIN),
+                        it_meas_ms = float(raw_channels.get("as7341_it_ms") or 0),
+                    )
 
+                    #temp measured values from raw counts
+                    measured_blue = float(bands['blue_W_m2'] or 0.0)
+                    measured_green = float(bands['green_W_m2'] or 0.0)
+                    measured_red = float(bands['red_W_m2'] or 0.0)
                     tolerance = float(manager.decision_policy.get("tolerance_pct", 5.0))
 
                     e_blue = safe_pct_error(measured_blue, tgt_blue)

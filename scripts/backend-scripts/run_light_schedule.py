@@ -50,6 +50,9 @@ def setup_logger() -> logging.Logger:
 # initialize logger
 LOGGER = setup_logger()
 
+# Keep DB note writes bounded to avoid MySQL "Data too long" errors.
+RUN_NOTE_MAX_LEN = 255
+
 # CONFIGURATION
 MQTT_HOST = os.getenv("MQTT_HOST", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
@@ -213,14 +216,24 @@ def get_best_light_profile(conn, crop: str, country: str, year: int):
 
 # update run status
 def set_run_status(conn, run_id: str, status:str, note:str | None = None):
+    safe_note = None
+    if note is not None:
+        safe_note = str(note)
+        if len(safe_note) > RUN_NOTE_MAX_LEN:
+            LOGGER.warning(
+                f"[RUN SCHEDULER] Truncating note for run_id={run_id} "
+                f"from {len(safe_note)} to {RUN_NOTE_MAX_LEN} chars"
+            )
+            safe_note = safe_note[:RUN_NOTE_MAX_LEN]
+
     if note is None:
         sql_update = "UPDATE runs SET status=%s, status_ts=UTC_TIMESTAMP(6) WHERE run_id=%s"
         args = (status, run_id)
         LOGGER.info(f"[RUN SCHEDULER]Updated run status. run_id: {run_id}, status: {status}")
     else:
         sql_update = "UPDATE runs SET status=%s, status_ts=UTC_TIMESTAMP(6), note=%s WHERE run_id=%s"
-        args = (status, note, run_id)
-        LOGGER.info(f"[RUN SCHEDULER] Updated run status. run_id: {run_id}, status: {status}, note: {note}")
+        args = (status, safe_note, run_id)
+        LOGGER.info(f"[RUN SCHEDULER] Updated run status. run_id: {run_id}, status: {status}, note: {safe_note}")
     cur= conn.cursor()
     cur.execute(sql_update, args)
     cur.close()

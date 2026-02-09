@@ -18,7 +18,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-import shared.spectral_conversion as spectral_conversion
+from shared import spectral_conversion
 from shared.spectral_conversion import wm2_from_counts_ref, safe_sum
 load_dotenv()
 

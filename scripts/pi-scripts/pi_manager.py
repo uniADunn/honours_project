@@ -117,11 +117,29 @@ def log_buffer_state(force: bool = False) -> None:
             f"[PI MANAGER] Buffer size={len(publish_buffer)}/{MAX_BUFFERED_MSGS}"
         )
         _last_buffer_log_ts = now
+
 def utc_time_now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
+def parse_iso_utc(strDate: str)-> datetime:
+    if not strDate:
+        raise ValueError("empty timestamp")
+    
+    strDate = strDate.strip()
+
+    if strDate.endswith("Z"):
+        strDate = strDate[:-1 + "+00:00"]
+
+    return datetime.fromisoformat(strDate).astimezone(timezone.utc)
+
 def calculate_integration_time_ms(atime: int, astep: int)->float:
     return ((atime+1)*(astep+1)*2.78)/1000
+
+def compute_slot(run_start_ts: datetime, now_ts: datetime)-> int:
+    elapsed_s = (now_ts - run_start_ts).total_seconds()
+    if elapsed_s < 0:
+        return 0
+    return int(elapsed_s //3600)
 
 class PiManager:
     def __init__(self):
@@ -129,9 +147,11 @@ class PiManager:
         self.lux = None
         self.spec = None
 
+        
         self.run_active = False
         self.shutdown_requested = False
         self.run_id = None
+        self.run_start_ts: datetime | None = None
         self.sample_interval_s = 5
         self.seq = 0
 
@@ -309,6 +329,18 @@ def main():
             
             manager.run_id = str(run_id)
             manager.sample_interval_s = int(cmd.get("sample_interval_s", 5))
+            try:
+                manager.run_start_ts = parse_iso_utc(cmd.get("run_start_ts"))
+            except Exception as e:
+                manager.ack(client, {
+                    "type": "READY",
+                    "run_id": manager.run_id,
+                    "source": SOURCE,
+                    "zone": ZONE,
+                    "status": "ERROR",
+                    "detail": f"missing/invalid run_start_ts: {e}"
+                })
+                return
 
             ok, detail = manager.init_sensors()
             if not ok:
@@ -329,6 +361,7 @@ def main():
             manager.ack(client, {
                 "type": "READY",
                 "run_id": manager.run_id,
+                "run_start_ts": manager.run_start_ts.isoformat().replace("+00:00", "Z"),
                 "source": SOURCE,
                 "zone": ZONE,
                 "status": "OK",
@@ -404,6 +437,10 @@ def main():
                     if flushed:
                         LOGGER.info(f"[PI MANAGER] Flushed {flushed} buffered messages during run. Remaining: {len(publish_buffer)}")
                         print(f"[MQTT] Flushed {flushed} buffered mssages during run. Remaining : {len(publish_buffer)}")
+                now_ts = datetime.now(timezone.utc)
+                slot = compute_slot(manager.run_start_ts, now_ts)
+                LOGGER.info(f"[SLOT] now: {now_ts.isoformat()}, run_start: {manager.run_start_ts.isoformat()}, slot: {slot}")
+                
                 payload = manager.build_payload()
                 if client.is_connected():
                     try:

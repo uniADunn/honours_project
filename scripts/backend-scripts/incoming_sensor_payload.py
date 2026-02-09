@@ -14,6 +14,9 @@ from pathlib import Path
 import logging
 from logging.handlers import RotatingFileHandler
 
+from shared import spectral_conversion
+from shared.spectral_conversion import wm2_from_counts_ref, safe_sum
+
 # Load environment variables from .env file
 load_dotenv()
 # MQTT Configuration
@@ -56,22 +59,7 @@ INSERT INTO {TABLE}(
     %(blue_W_m2)s, %(green_W_m2)s, %(red_W_m2)s
     );
     """
-# DATASHEET REFERENCE IRRADIANCE: Ee = (107.67µW/cm² / 100)= 1.0767 W/m²
-E_REF_W_M2 = 107.67 / 100 # 1.0767
 
-# DATASHEET REFERENCE COUNTS again=64, atime = 2.78ms (2700k warm white LED)
-GAIN_REF = 64.0
-IT_REF_MS = 27.8
-C_REF = {
-    415: 55,
-    445: 110,
-    480: 210,
-    515: 390,
-    555: 590,
-    590: 840,
-    630: 1350,
-    680: 1070
-}
 def setup_console_logger() -> logging.Logger:
     logger = logging.getLogger("backend_ingestion")
     if getattr(logger, "_configured_console", False):
@@ -182,33 +170,7 @@ if not MYSQL_PASSWORD:
     LOGGER.error("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
     raise RuntimeError("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
 
-LOGGER.info(f"[CONFIG] Reference Irradiance E_ref = {E_REF_W_M2} W/m2")
-
-
-def wm2_from_counts_ref(counts:int | None, wl_nm: int, gain_meas: float| None, it_meas_ms: float | None):
-    """
-    Convert as7341 counts to an irradiance proxy (W/m2) using datasheet reference counts.
-    applies normilization for gain and integration time so the result stays comparable if settings change.
-    """
-    if counts is None:
-        return None
-    
-    c_ref = C_REF.get(wl_nm)
-    if not c_ref:
-        return None
-    
-    # if metadata is missing, fall back to assume reference settings
-    if not gain_meas or gain_meas <= 0:
-        gain_meas = GAIN_REF
-    if not it_meas_ms or it_meas_ms <=0:
-        it_meas_ms = IT_REF_MS
-
-    norm = (GAIN_REF / float(gain_meas)) * (IT_REF_MS / float(it_meas_ms))
-    return float(counts) * (E_REF_W_M2 / float(c_ref)) * norm
-
-def safe_sum(*xs):
-    vals = [v for v in xs if v is not None]
-    return sum(vals) if vals else None
+LOGGER.info(f"[CONFIG] Reference Irradiance E_ref = {spectral_conversion.E_REF_W_M2} W/m2")
 
 def as_float_or_none(value):
     try:

@@ -121,16 +121,20 @@ def log_buffer_state(force: bool = False) -> None:
 def utc_time_now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
-def parse_iso_utc(strDate: str)-> datetime:
+def parse_iso_utc(strDate: str) -> datetime:
     if not strDate:
         raise ValueError("empty timestamp")
-    
-    strDate = strDate.strip()
 
-    if strDate.endswith("Z"):
-        strDate = strDate[:-1 + "+00:00"]
+    # Normalize common UTC suffix used by JSON payloads.
+    raw = str(strDate).strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
 
-    return datetime.fromisoformat(strDate).astimezone(timezone.utc)
+    dt = datetime.fromisoformat(raw)
+    if dt.tzinfo is None:
+        # Treat naive timestamps as UTC to keep run timing deterministic.
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 def calculate_integration_time_ms(atime: int, astep: int)->float:
     return ((atime+1)*(astep+1)*2.78)/1000

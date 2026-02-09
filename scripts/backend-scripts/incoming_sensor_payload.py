@@ -15,7 +15,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 
 from shared import spectral_conversion
-from shared.spectral_conversion import wm2_from_counts_ref, safe_sum
+from shared.spectral_conversion import bands_wm2_from_counts, safe_sum
 
 # Load environment variables from .env file
 load_dotenv()
@@ -304,16 +304,16 @@ def on_message(client, userdata, msg):
     it_meas_ms = as_float_or_none(data.get("as7341_it_ms"))
     
     #calculate irradiance values
-    w415 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_415nm")), 415, gain_meas, it_meas_ms)
-    w445 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_445nm")), 445, gain_meas, it_meas_ms)
-    w480 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_480nm")), 480, gain_meas, it_meas_ms)
+    w415 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_415nm")), 415, gain_meas, it_meas_ms)
+    w445 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_445nm")), 445, gain_meas, it_meas_ms)
+    w480 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_480nm")), 480, gain_meas, it_meas_ms)
 
-    w515 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_515nm")), 515,  gain_meas, it_meas_ms)
-    w555 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_555nm")), 555,  gain_meas, it_meas_ms)
-    w590 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_590nm")), 590,  gain_meas, it_meas_ms)
+    w515 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_515nm")), 515,  gain_meas, it_meas_ms)
+    w555 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_555nm")), 555,  gain_meas, it_meas_ms)
+    w590 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_590nm")), 590,  gain_meas, it_meas_ms)
 
-    w630 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_630nm")), 630,  gain_meas, it_meas_ms)
-    w680 = wm2_from_counts_ref(as_int_or_none(data.get("as7341_680nm")), 680,  gain_meas, it_meas_ms)
+    w630 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_630nm")), 630,  gain_meas, it_meas_ms)
+    w680 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_680nm")), 680,  gain_meas, it_meas_ms)
 
     run_id = data.get("run_id")
     if run_id is None:

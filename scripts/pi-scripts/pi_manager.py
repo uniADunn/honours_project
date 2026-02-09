@@ -19,7 +19,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from shared import spectral_conversion
-from shared.spectral_conversion import wm2_from_counts_ref, safe_sum
+from shared.spectral_conversion import bands_wm2_from_counts, safe_sum
 load_dotenv()
 
 _last_buffer_log_ts = 0.0
@@ -521,7 +521,7 @@ def main():
                     tgt_green = float(tgt.get("green", 0))
                     tgt_red = float(tgt.get("red", 0))
 
-                    bands = wm2_from_counts_ref(
+                    bands = bands_wm2_from_counts(
                         c415 = raw_channels.get("as7341_415nm"),
                         c445 = raw_channels.get("as7341_445nm"),
                         c480 = raw_channels.get("as7341_480nm"),

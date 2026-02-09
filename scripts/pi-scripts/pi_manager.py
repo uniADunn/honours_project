@@ -145,6 +145,17 @@ def compute_slot(run_start_ts: datetime, now_ts: datetime)-> int:
         return 0
     return int(elapsed_s //3600)
 
+def safe_pct_error(measured: float, ref: float) -> float:
+    if ref == 0:
+        return 0.0
+    return ((measured -ref)/ref) * 100.0
+
+def decide_from_pct_error(pct_error: float, tolerance_pct: float) -> str:
+    if pct_error < -tolerance_pct:
+        return "INCREASE"
+    if pct_error > tolerance_pct:
+        return "DECREASE"
+    return "HOLD"
 class PiManager:
     def __init__(self):
         self.i2c = None
@@ -156,8 +167,13 @@ class PiManager:
         self.shutdown_requested = False
         self.run_id = None
         self.run_start_ts: datetime | None = None
+        self.targets_by_slot: list | None = None
         self.sample_interval_s = 5
         self.seq = 0
+        self.decision_policy: dict = {
+            "tolerance_pct": 20.0,
+            "min_samples_before_decision": 3
+        }
 
     def init_sensors(self) -> tuple[bool, str]:
         try:
@@ -199,7 +215,7 @@ class PiManager:
         else:
             return True, "OK (both sensors initialized)"
         
-    def build_payload(self) -> str:
+    def build_payload(self) -> tuple[str, dict]:
         #BH1750 lux
         if self.lux is None:
             bh1750_lux = None
@@ -283,7 +299,20 @@ class PiManager:
 
             "run_seq": self.seq
         }
-        return json.dumps(payload)
+        raw_channels = {
+            "as7341_415nm": as7341_415nm,
+            "as7341_445nm": as7341_445nm,
+            "as7341_480nm": as7341_480nm,
+            "as7341_515nm": as7341_515nm,
+            "as7341_555nm": as7341_555nm,
+            "as7341_590nm": as7341_590nm,
+            "as7341_630nm": as7341_630nm,
+            "as7341_680nm": as7341_680nm,
+            "as7341_clear": as7341_clear,
+            "as7341_nir": as7341_nir,
+            "bh1750_lux": bh1750_lux,
+        }
+        return json.dumps(payload), raw_channels
     
     def ack(self, client: mqtt.Client, msg: dict):
         client.publish(ACK_TOPIC, json.dumps(msg), qos=1, retain=False)
@@ -335,6 +364,20 @@ def main():
             manager.sample_interval_s = int(cmd.get("sample_interval_s", 5))
             try:
                 manager.run_start_ts = parse_iso_utc(cmd.get("run_start_ts"))
+                targets = cmd.get("targets_by_slot")
+                manager.decision_policy = cmd.get("decision_policy") or {"tolerance_pct": 5.0, "min_samples_for_decision": 3}
+                if not isinstance(targets, list) or len(targets) == 0:
+                    manager.ack(client, {
+                        "type": "READY",
+                        "run_id": manager.run_id,
+                        "source": SOURCE,
+                        "zone": ZONE,
+                        "status": "ERROR",
+                        "detail": "missing or invalid targets_by_slot (must be non-empty list)"
+                    })
+                    return
+                manager.targets_by_slot = targets
+                LOGGER.info(f"[SCHEDULER] RECEIVED TARGET_BY_SLOT: {len(manager.targets_by_slot)}, first_ref_ts: {manager.targets_by_slot[0].get('ref_ts')}")
             except Exception as e:
                 manager.ack(client, {
                     "type": "READY",
@@ -389,6 +432,8 @@ def main():
             manager.run_active = False
             stopped_run = manager.run_id
             manager.run_id = None
+            manager.targets_by_slot = None
+            manager.run_start_ts = None
             manager.seq = 0
             manager.ack(client, {"type": "STOPPED", "run_id": stopped_run, "source": SOURCE, "zone": ZONE, "status": "OK"})
             LOGGER.info(f"[PI MANAGER] Stopped run_id: {stopped_run}")
@@ -409,6 +454,8 @@ def main():
             manager.shutdown_requested = True
             stopped_run = manager.run_id
             manager.run_id = None
+            manager.targets_by_slot = None
+            manager.run_start_ts = None
             manager.seq = 0
             manager.ack(client, {
                 "type": "EXITING",
@@ -442,10 +489,56 @@ def main():
                         LOGGER.info(f"[PI MANAGER] Flushed {flushed} buffered messages during run. Remaining: {len(publish_buffer)}")
                         print(f"[MQTT] Flushed {flushed} buffered mssages during run. Remaining : {len(publish_buffer)}")
                 now_ts = datetime.now(timezone.utc)
+
+                if manager.run_start_ts is None:
+                    LOGGER.error("[SLOT] run_start_ts is None but run_active = True. Forcing STOP state.")
+                    manager.run_active = False
+                    continue
                 slot = compute_slot(manager.run_start_ts, now_ts)
                 LOGGER.info(f"[SLOT] now: {now_ts.isoformat()}, run_start: {manager.run_start_ts.isoformat()}, slot: {slot}")
                 
-                payload = manager.build_payload()
+                payload, raw_channels = manager.build_payload()
+
+                if manager.targets_by_slot is None:
+                    LOGGER.warning(f"[SLOT] targets_by_slot is None during run. Skipping decision.")
+                else:
+                    trow = manager.targets_by_slot[slot]
+                    tgt = trow.get("target", {})
+
+                    #reference targets (W/m2)
+                    tgt_blue = float(tgt.get("blue", 0))
+                    tgt_green = float(tgt.get("green", 0))
+                    tgt_red = float(tgt.get("red", 0))
+
+                    #temp measured values from raw counts
+                    measured_blue = float(raw_channels.get("as7341_415nm") or 0) + float(raw_channels.get("as7341_445nm") or 0) + float(raw_channels.get("as7341_480nm") or 0)
+                    measured_green = float(raw_channels.get("as7341_515nm") or 0) + float(raw_channels.get("as7341_555nm") or 0) + float(raw_channels.get("as7341_590nm") or 0)
+                    measured_red = float(raw_channels.get("as7341_630nm") or 0) + float(raw_channels.get("as7341_680nm") or 0)
+
+                    tolerance = float(manager.decision_policy.get("tolerance_pct", 5.0))
+
+                    e_blue = safe_pct_error(measured_blue, tgt_blue)
+                    e_green = safe_pct_error(measured_green, tgt_green)
+                    e_red = safe_pct_error(measured_red, tgt_red)
+
+                    min_n = int(manager.decision_policy.get("min_samples_before_decision", 3))
+                    if manager.seq < min_n:
+                        decision = {"blue": "HOLD", "green": "HOLD", "red": "HOLD"}
+
+                    decision = {
+                        "blue": decide_from_pct_error(e_blue, tolerance),
+                        "green": decide_from_pct_error(e_green, tolerance),
+                        "red": decide_from_pct_error(e_red, tolerance)
+                    }
+                    
+                    LOGGER.info(
+                        f"[DECISION_TEMP] slot={slot} ref_ts={trow.get('ref_ts')} "
+                        f"meas_counts(b/g/r)=({measured_blue:.0f},{measured_green:.0f},{measured_red:.0f}) "
+                        f"tgt_wm2(b/g/r)=({tgt_blue:.4f},{tgt_green:.4f},{tgt_red:.4f}) "
+                        f"pct_err(b/g/r)=({e_blue:.2f},{e_green:.2f},{e_red:.2f}) "
+                        f"decision={decision}"
+                    )
+
                 if client.is_connected():
                     try:
                         info = client.publish(DATA_TOPIC, payload, qos=1, retain=False)

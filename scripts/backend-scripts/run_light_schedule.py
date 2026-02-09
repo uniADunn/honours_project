@@ -494,7 +494,7 @@ def main():
         LOGGER.error(f"[RUN SCHEDULER] timed out waiting for ack from pi. {to}")
         return
     
-    print(f"[RUN] Running. run_id: {run_id}.\nWaiting 15 seconds to accumulate sensor readings...")
+    print(f"[RUN] Running. run_id: {run_id}.\nWaiting {duration_in_seconds} seconds to accumulate sensor readings...")
     LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting {duration_in_seconds} seconds to accumulate sensor readings...")
     
     try:

@@ -437,11 +437,7 @@ def main():
         
     try:
         conn, cur = db_connect_forever()
-        
-        LOGGER.info("[DB] Connected to database")
-
         run_mqtt_forever(conn, cur)
-        #print("[db] connected to database")
     finally:
         try:
             if cur:
@@ -463,10 +459,13 @@ if __name__ == "__main__":
         msg = str(e)
         LOGGER.error(f"[FILELOCK] Runtime Error: {str(e)}")
 
-        if "Another instance is already runnning" in msg:
+        if "Another instance is already running" in msg:
             raise SystemExit(2)
-        
-        SystemExit(1)
-        #print(f"[FILELOCK] RuntimeError: {str(e)}")
+        raise SystemExit(1)
+    except KeyboardInterrupt:
+        raise SystemExit(0)
+    except Exception:
+        LOGGER.exception("fatal error")
+        raise SystemExit(1)
     finally:
         lock.releaseLock()

@@ -76,3 +76,32 @@ def bands_wm2_from_counts(
         "green_W_m2": safe_sum(w515, w555, w590),
         "red_W_m2": safe_sum(w630, w680),
     }
+
+def bands_wm2_from_payload(payload: dict) -> dict[str, Optional[float]]:
+    gain_meas = payload.get("as7341_gain")
+    it_meas_ms = payload.get("as7341_it_ms")
+
+    def _as_int(v):
+        try:
+            return int(v) if v is not None else None
+        except Exception:
+            return None
+    
+    def _as_float(v):
+        try:
+            return float(v) if v is not None else None
+        except Exception:
+            return None
+        
+    return bands_wm2_from_counts(
+        c415=_as_int(payload.get("as7341_415nm")),
+        c445=_as_int(payload.get("as7341_445nm")),
+        c480=_as_int(payload.get("as7341_480nm")),
+        c515=_as_int(payload.get("as7341_515nm")),
+        c555=_as_int(payload.get("as7341_555nm")),
+        c590=_as_int(payload.get("as7341_590nm")),
+        c630=_as_int(payload.get("as7341_630nm")),
+        c680=_as_int(payload.get("as7341_680nm")),
+        gain_meas=_as_float(gain_meas),
+        it_meas_ms=_as_float(it_meas_ms)
+    )

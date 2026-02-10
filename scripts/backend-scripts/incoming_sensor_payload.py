@@ -15,7 +15,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 
 from shared import spectral_conversion
-from shared.spectral_conversion import bands_wm2_from_counts, safe_sum
+from shared.spectral_conversion import bands_wm2_from_counts, bands_wm2_from_payload
 
 # Load environment variables from .env file
 load_dotenv()
@@ -300,20 +300,8 @@ def on_message(client, userdata, msg):
         #print(f"[mqtt] missing required fields in payload: ts= {ts_in!r}, source= {source!r}, zone= {zone!r}")
         return
     
-    gain_meas = as_float_or_none(data.get("as7341_gain"))
-    it_meas_ms = as_float_or_none(data.get("as7341_it_ms"))
-    
     #calculate irradiance values
-    w415 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_415nm")), 415, gain_meas, it_meas_ms)
-    w445 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_445nm")), 445, gain_meas, it_meas_ms)
-    w480 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_480nm")), 480, gain_meas, it_meas_ms)
-
-    w515 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_515nm")), 515,  gain_meas, it_meas_ms)
-    w555 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_555nm")), 555,  gain_meas, it_meas_ms)
-    w590 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_590nm")), 590,  gain_meas, it_meas_ms)
-
-    w630 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_630nm")), 630,  gain_meas, it_meas_ms)
-    w680 = bands_wm2_from_counts(as_int_or_none(data.get("as7341_680nm")), 680,  gain_meas, it_meas_ms)
+    bands = bands_wm2_from_payload(data)
 
     run_id = data.get("run_id")
     if run_id is None:
@@ -349,9 +337,9 @@ def on_message(client, userdata, msg):
         "as7341_clear": as_int_or_none(data.get("as7341_clear")),
         "as7341_nir": as_int_or_none(data.get("as7341_nir")),
 
-        "blue_W_m2": safe_sum(w415, w445, w480),
-        "green_W_m2": safe_sum(w515, w555, w590),
-        "red_W_m2": safe_sum(w630, w680),
+        "blue_W_m2": bands.get("blue_W_m2"),
+        "green_W_m2": bands.get("green_W_m2"),
+        "red_W_m2": bands.get("red_W_m2"),
 
     }
 

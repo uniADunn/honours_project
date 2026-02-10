@@ -15,7 +15,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 
 from shared import spectral_conversion
-from shared.spectral_conversion import bands_wm2_from_counts, bands_wm2_from_payload
+from shared.spectral_conversion import bands_wm2_from_payload
 
 # Load environment variables from .env file
 load_dotenv()
@@ -216,7 +216,16 @@ def db_insert_with_reconnect(userdata, row):
     for attempt in (1,2):
         try:
             userdata["db_cursor"].execute(INSERT_SQL, row)
-            LOGGER.info("[DB] sensor data inserted successfully")
+
+            userdata["ok_inserts"] = userdata.get("ok_inserts", 0) + 1
+            now = time.time()
+            last = userdata.get("last_ok_log_ts", 0.0)
+
+            if now - last >= 30:
+                LOGGER.info(f"[DB] inserts ok in last window: {userdata['ok_inserts']} (last 30s)")
+                userdata["ok_inserts"] = 0
+                userdata["last_ok_log_ts"] = now
+            
             return True
         
         except Error as e:            
@@ -275,8 +284,10 @@ def on_message(client, userdata, msg):
     ts_in = data.get('ts')
     source = data.get('source')
     zone = data.get('zone')
-
-    if not ts_in or source is None or zone is None:
+    if isinstance(zone, str):
+        zone = zone.strip().lower()
+        data['zone'] = zone
+    if not ts_in or source is None or not zone:
         LOGGER.error(f"[MQTT] Missing required fields in payload: timestamp = {ts_in!r}, source = {source!r}, zone = {zone!r}")
     #   print(f"[MQTT] Missing required fields in payload: ts = {ts_in!r}, source = {source!r}, zone = {zone!r}" )
         return
@@ -346,7 +357,7 @@ def on_message(client, userdata, msg):
     try:
        ok = db_insert_with_reconnect(userdata, row)
        if not ok:
-        return
+            return
     except Error as e:
         LOGGER.error(f"[DB] Insert failed: {e}\nrow: {row}")
 
@@ -354,7 +365,7 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=No
     LOGGER.info(f"[MQTT] Disconnected with reason_code: {reason_code}, flags: {disconnect_flags}.")
     #print(f"[MQTT] Disconnected with reason_code: {reason_code}.")
 
-def run_mqtt_forever(cur):
+def run_mqtt_forever(conn, cur):
     if not (MQTT_USER and MQTT_PASSWORD):
         LOGGER.error("MQTT_USER / MQTT_PASSWORD missing in backend .env")
         raise RuntimeError("MQTT_USER / MQTT_PASSWORD missing in backend .env")
@@ -378,7 +389,12 @@ def run_mqtt_forever(cur):
         client.on_disconnect = on_disconnect
         client.on_message = on_message
 
-        client.user_data_set({'db_cursor': cur})
+        client.user_data_set({
+            'db_conn': conn,
+            'db_cursor': cur,
+            'ok_inserts': 0,
+            'last_ok_log_ts': time.time(),
+            })
         client.reconnect_delay_set(min_delay=1, max_delay=60)
 
         try:
@@ -415,22 +431,23 @@ def run_mqtt_forever(cur):
 
 
 def main():
-    try:
-        conn = db_connect()
-        cur = conn.cursor()
-        LOGGER.info("[DB] Connected to database")
-        #print("[db] connected to database")
-    except Error as e:
-        LOGGER.error(f"[DB] Connection  to database failed: {e}")
-        #print(f"[db] connectionn failed: {e}")
-        sys.exit(1)
     
+    conn = None
+    cur = None
+        
     try:
-        run_mqtt_forever(cur)
+        conn, cur = db_connect_forever()
+        
+        LOGGER.info("[DB] Connected to database")
+
+        run_mqtt_forever(conn, cur)
+        #print("[db] connected to database")
     finally:
         try:
-            cur.close()
-            conn.close()
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
         except Exception:
             pass
 

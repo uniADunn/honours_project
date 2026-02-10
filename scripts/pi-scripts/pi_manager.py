@@ -312,6 +312,8 @@ class PiManager:
             "as7341_680nm": as7341_680nm,
             "as7341_clear": as7341_clear,
             "as7341_nir": as7341_nir,
+            "as7341_gain": AS7341_GAIN,
+            "as7341_it_ms": as7341_it_ms,
             "bh1750_lux": bh1750_lux,
         }
         return json.dumps(payload), raw_channels
@@ -509,58 +511,63 @@ def main():
                 LOGGER.info(f"[SLOT] now: {now_ts.isoformat()}, run_start: {manager.run_start_ts.isoformat()}, slot: {slot}")
                 
                 payload, raw_channels = manager.build_payload()
-
+                decision = None
                 if manager.targets_by_slot is None:
                     LOGGER.warning(f"[SLOT] targets_by_slot is None during run. Skipping decision.")
                 else:
-                    trow = manager.targets_by_slot[slot]
-                    tgt = trow.get("target", {})
-
-                    #reference targets (W/m2)
-                    tgt_blue = float(tgt.get("blue", 0))
-                    tgt_green = float(tgt.get("green", 0))
-                    tgt_red = float(tgt.get("red", 0))
-
-                    bands = bands_wm2_from_counts(
-                        c415 = raw_channels.get("as7341_415nm"),
-                        c445 = raw_channels.get("as7341_445nm"),
-                        c480 = raw_channels.get("as7341_480nm"),
-                        c515 = raw_channels.get("as7341_515nm"),
-                        c555 = raw_channels.get("as7341_555nm"),
-                        c590 = raw_channels.get("as7341_590nm"),
-                        c630 = raw_channels.get("as7341_630nm"),
-                        c680 = raw_channels.get("as7341_680nm"),
-                        gain_meas = float(raw_channels.get("as7341_gain") or AS7341_GAIN),
-                        it_meas_ms = float(raw_channels.get("as7341_it_ms") or 0),
-                    )
-
-                    #temp measured values from raw counts
-                    measured_blue = float(bands['blue_W_m2'] or 0.0)
-                    measured_green = float(bands['green_W_m2'] or 0.0)
-                    measured_red = float(bands['red_W_m2'] or 0.0)
-                    tolerance = float(manager.decision_policy.get("tolerance_pct", 5.0))
-
-                    e_blue = safe_pct_error(measured_blue, tgt_blue)
-                    e_green = safe_pct_error(measured_green, tgt_green)
-                    e_red = safe_pct_error(measured_red, tgt_red)
-
-                    min_n = int(manager.decision_policy.get("min_samples_before_decision", 3))
-                    if manager.seq < min_n:
+                    if slot < 0 or slot >= len(manager.targets_by_slot):
+                        LOGGER.warning(f"[SLOT] Computed slot {slot} is outside target_by_slot_range (len: {len(manager.targets_by_slot)}). Holding decisions for this sample")
                         decision = {"blue": "HOLD", "green": "HOLD", "red": "HOLD"}
+                    else:
+                        trow = manager.targets_by_slot[slot]
+                        tgt = trow.get("target", {}) or {}
 
-                    decision = {
-                        "blue": decide_from_pct_error(e_blue, tolerance),
-                        "green": decide_from_pct_error(e_green, tolerance),
-                        "red": decide_from_pct_error(e_red, tolerance)
-                    }
+                        #reference targets (W/m2)
+                        tgt_blue = float(tgt.get("blue", 0.0))
+                        tgt_green = float(tgt.get("green", 0.0))
+                        tgt_red = float(tgt.get("red", 0.0))
+
+                        bands = bands_wm2_from_counts(
+                            c415 = raw_channels.get("as7341_415nm"),
+                            c445 = raw_channels.get("as7341_445nm"),
+                            c480 = raw_channels.get("as7341_480nm"),
+                            c515 = raw_channels.get("as7341_515nm"),
+                            c555 = raw_channels.get("as7341_555nm"),
+                            c590 = raw_channels.get("as7341_590nm"),
+                            c630 = raw_channels.get("as7341_630nm"),
+                            c680 = raw_channels.get("as7341_680nm"),
+                            gain_meas = float(raw_channels.get("as7341_gain") or AS7341_GAIN),
+                            it_meas_ms = float(raw_channels.get("as7341_it_ms") or 0),
+                        )
+
+                        #temp measured values from raw counts
+                        measured_blue = float(bands.get('blue_W_m2') or 0.0)
+                        measured_green = float(bands.get('green_W_m2') or 0.0)
+                        measured_red = float(bands.get('red_W_m2') or 0.0)
+                        tolerance = float(manager.decision_policy.get("tolerance_pct", 5.0))
+
+                        e_blue = safe_pct_error(measured_blue, tgt_blue)
+                        e_green = safe_pct_error(measured_green, tgt_green)
+                        e_red = safe_pct_error(measured_red, tgt_red)
+
+                        min_n = int(manager.decision_policy.get("min_samples_before_decision", 3))
+
+                        if manager.seq < min_n:
+                            decision = {"blue": "HOLD", "green": "HOLD", "red": "HOLD"}
+                        else:
+                            decision = {
+                                "blue": decide_from_pct_error(e_blue, tolerance),
+                                "green": decide_from_pct_error(e_green, tolerance),
+                                "red": decide_from_pct_error(e_red, tolerance)
+                            }
                     
-                    LOGGER.info(
-                        f"[DECISION_TEMP] slot={slot} ref_ts={trow.get('ref_ts')} "
-                        f"meas_counts(b/g/r)=({measured_blue:.0f},{measured_green:.0f},{measured_red:.0f}) "
-                        f"tgt_wm2(b/g/r)=({tgt_blue:.4f},{tgt_green:.4f},{tgt_red:.4f}) "
-                        f"pct_err(b/g/r)=({e_blue:.2f},{e_green:.2f},{e_red:.2f}) "
-                        f"decision={decision}"
-                    )
+                        LOGGER.info(
+                            f"[DECISION_TEMP] slot={slot} ref_ts={trow.get('ref_ts')} "
+                            f"meas_wm2(b/g/r)=({measured_blue:.4f},{measured_green:.4f},{measured_red:.4f}) "
+                            f"tgt_wm2(b/g/r)=({tgt_blue:.4f},{tgt_green:.4f},{tgt_red:.4f}) "
+                            f"pct_err(b/g/r)=({e_blue:.2f},{e_green:.2f},{e_red:.2f}) "
+                            f"decision={decision}"
+                        )
 
                 if client.is_connected():
                     try:

@@ -30,7 +30,7 @@ def wm2_from_counts_ref(
     if counts is None:
         return None
     
-    c_ref = C_REF.GET(int(wl_nm))
+    c_ref = C_REF.get(int(wl_nm))
     if not c_ref:
         return None
     

@@ -424,6 +424,8 @@ def run_mqtt_forever(cur):
             backoff_s = min(backoff_s * 2, 60)
             continue
 
+
+
 def main():
     try:
         conn = db_connect()
@@ -443,7 +445,6 @@ def main():
             conn.close()
         except Exception:
             pass
-
 
 if __name__ == "__main__":
     lock = SingleInstanceLock(r"Local\HonoursProject_BackendIngestion")

@@ -608,6 +608,19 @@ def main():
                     measured_green = float(bands.get("green_W_m2") or 0.0)
                     measured_red = float(bands.get("red_W_m2") or 0.0)
 
+                    manager.accumulated_joules_by_band["blue"] += (measured_blue * dt)
+                    manager.accumulated_joules_by_band["green"] += (measured_green * dt)
+                    manager.accumulated_joules_by_band["red"] += (measured_red * dt)
+
+                    LOGGER.info(
+                        f"[ACCUM] slot: {slot} "
+                        f"accumulated_Joules(b/g/r)=("
+                        f"{manager.accumulated_joules_by_band['blue']:.4f},"
+                        f"{manager.accumulated_joules_by_band['green']:.4f},"
+                        f"{manager.accumulated_joules_by_band['red']:.4f}) "
+                        f"dt: {dt:.4f}s"
+                    )
+
                     e_blue = safe_pct_error(measured_blue, tgt_blue)
                     e_green = safe_pct_error(measured_green, tgt_green)
                     e_red = safe_pct_error(measured_red, tgt_red)

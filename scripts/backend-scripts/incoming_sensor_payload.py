@@ -64,79 +64,79 @@ INSERT INTO {TABLE}(
 
 INSERT_DECISIONS_SQL = f"""
 INSERT INTO {DECISION_TABLE}(
-    run_id, run_seq, ts_utc, source, zone, slot, ref_ts,
-    tolerance_pct, min_sample_before_decision, notes,
+    run_id, run_seq, ts_utc, source, zone, slot, ref_ts_utc,
+    tolerance_pct, min_samples_before_decision, notes,
 
     blue_measured_W_m2,
     blue_target_MJ_m2_hr,
-    blue_target_j__m2_slot_total,
+    blue_target_j_m2_slot_total,
     blue_accumulated_j_m2_slot,
     blue_predicted_j_m2_slot,
     blue_decision,
 
     green_measured_W_m2,
     green_target_MJ_m2_hr,
-    green_target_j__m2_slot_total,
+    green_target_j_m2_slot_total,
     green_accumulated_j_m2_slot,
     green_predicted_j_m2_slot,
     green_decision,
 
     red_measured_W_m2,
     red_target_MJ_m2_hr,
-    red_target_j__m2_slot_total,
+    red_target_j_m2_slot_total,
     red_accumulated_j_m2_slot,
     red_predicted_j_m2_slot,
     red_decision
 )
 VALUES (
-    %(run_id)s, %(run_seq)s, %(ts_utc)s, %(source)s, %(zone)s, %(slot)s, %(ref_ts)s,
-    %(tolerance_pct)s, %(min_sample_before_decision)s, %(notes)s,
+    %(run_id)s, %(run_seq)s, %(ts_utc)s, %(source)s, %(zone)s, %(slot)s, %(ref_ts_utc)s,
+    %(tolerance_pct)s, %(min_samples_before_decision)s, %(notes)s,
 
     %(blue_measured_W_m2)s,
     %(blue_target_MJ_m2_hr)s,
-    %(blue_target_j__m2_slot_total)s,
+    %(blue_target_j_m2_slot_total)s,
     %(blue_accumulated_j_m2_slot)s,
     %(blue_predicted_j_m2_slot)s,
     %(blue_decision)s,
 
     %(green_measured_W_m2)s,
     %(green_target_MJ_m2_hr)s,
-    %(green_target_j__m2_slot_total)s,
+    %(green_target_j_m2_slot_total)s,
     %(green_accumulated_j_m2_slot)s,
     %(green_predicted_j_m2_slot)s,
     %(green_decision)s,
 
     %(red_measured_W_m2)s,
     %(red_target_MJ_m2_hr)s,
-    %(red_target_j__m2_slot_total)s,
+    %(red_target_j_m2_slot_total)s,
     %(red_accumulated_j_m2_slot)s,
     %(red_predicted_j_m2_slot)s,
     %(red_decision)s
 )
 ON DUPLICATE KEY UPDATE
     ts_utc = VALUES(ts_utc),
-    ref_ts = VALUES(ref_ts),
+    ref_ts_utc = VALUES(ref_ts_utc),
     tolerance_pct = VALUES(tolerance_pct),
-    min_sample_before_decision = VALUES(min_sample_before_decision),
+    min_samples_before_decision = VALUES(min_samples_before_decision),
     notes = VALUES(notes),
 
     blue_measured_W_m2 = VALUES(blue_measured_W_m2),
     blue_target_MJ_m2_hr = VALUES(blue_target_MJ_m2_hr),
-    blue_target_j__m2_slot_total = VALUES(blue_target_j__m2_slot_total),
+    blue_target_j_m2_slot_total = VALUES(blue_target_j_m2_slot_total),
     blue_accumulated_j_m2_slot = VALUES(blue_accumulated_j_m2_slot),
     blue_predicted_j_m2_slot = VALUES(blue_predicted_j_m2_slot),
     blue_decision = VALUES(blue_decision),
 
     green_measured_W_m2 = VALUES(green_measured_W_m2),
     green_target_MJ_m2_hr = VALUES(green_target_MJ_m2_hr),
-    green_target_j__m2_slot_total = VALUES(green_target_j__m2_slot_total),
+    green_target_j_m2_slot_total = VALUES(green_target_j_m2_slot_total),
     green_accumulated_j_m2_slot = VALUES(green_accumulated_j_m2_slot),
     green_predicted_j_m2_slot = VALUES(green_predicted_j_m2_slot),
     green_decision = VALUES(green_decision),
 
     red_measured_W_m2 = VALUES(red_measured_W_m2),
     red_target_MJ_m2_hr = VALUES(red_target_MJ_m2_hr),
-    red_target_j__m2_slot_total = VALUES(red_target_j__m2_slot_total),
+    red_target_j_m2_slot_total = VALUES(red_target_j_m2_slot_total),
     red_accumulated_j_m2_slot = VALUES(red_accumulated_j_m2_slot),
     red_predicted_j_m2_slot = VALUES(red_predicted_j_m2_slot),
     red_decision = VALUES(red_decision);
@@ -275,7 +275,7 @@ def handle_decision_message(userdata, data: dict) -> None:
         LOGGER.error(f"[DECISION] Invalid timestamp: {data.get('ts')!r} err: {e}")
         return
     
-    ref_ts_in = data.get("ref_ts")
+    ref_ts_in = data.get("ref_ts_utc")
     ref_ts = None
 
     if ref_ts_in:
@@ -304,7 +304,7 @@ def handle_decision_message(userdata, data: dict) -> None:
         "source": str(source) if source is not None else None,
         "zone": str(zone).strip().lower() if isinstance(zone, str) else zone,
         "slot": slot,
-        "ref_ts": ref_ts,
+        "ref_ts_utc": ref_ts,
         "tolerance_pct": tolerance_pct,
         "min_samples_before_decision": min_n,
         "notes": data.get("notes"),

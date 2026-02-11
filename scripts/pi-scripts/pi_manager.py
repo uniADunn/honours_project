@@ -148,17 +148,17 @@ def compute_slot(run_start_ts: datetime, now_ts: datetime)-> int:
         return 0
     return int(elapsed_s //3600)
 
-def safe_pct_error(measured: float, ref: float) -> float:
-    if ref == 0:
-        return 0.0
-    return ((measured -ref)/ref) * 100.0
+def decide_energy(pred_j: float, tgt_j: float, tolerance_pct: float) -> str:
+    lower = tgt_j * (1.0 - (tolerance_pct /100.0))
+    upper = tgt_j * (1.0 + (tolerance_pct /100.0))
 
-def decide_from_pct_error(pct_error: float, tolerance_pct: float) -> str:
-    if pct_error < -tolerance_pct:
+    if pred_j < lower:
         return "INCREASE"
-    if pct_error > tolerance_pct:
+    elif pred_j > upper:
         return "DECREASE"
-    return "HOLD"
+    else:
+        return "HOLD"
+
 class PiManager:
     def __init__(self):
         self.i2c = None
@@ -570,12 +570,17 @@ def main():
                 measured_green = 0.0
                 measured_red = 0.0
 
-                e_blue = 0.0
-                e_green = 0.0
-                e_red = 0.0
-
                 tolerance = float(manager.decision_policy.get("tolerance_pct", 5.0))
                 min_n = int(manager.decision_policy.get("min_samples_before_decision", 3))
+
+                remaining_s_in_slot = 0.0
+                pred_blue_j = 0.0
+                pred_green_j = 0.0
+                pred_red_j = 0.0
+                
+                tgt_blue_j = 0.0
+                tgt_green_j = 0.0
+                tgt_red_j = 0.0
 
                 if manager.targets_by_slot is None:
                     notes = "HOLD: targets_by_slot is None"
@@ -639,24 +644,25 @@ def main():
                         f"dt: {dt:.4f}s"
                     )
 
-                    e_blue = safe_pct_error(measured_blue, tgt_blue)
-                    e_green = safe_pct_error(measured_green, tgt_green)
-                    e_red = safe_pct_error(measured_red, tgt_red)
-
                     if manager.seq < min_n:
                         notes = f"HOLD: seq: {manager.seq} < min_samples_before_decision {min_n}"
                     else:
                         decision_out = {
-                            "blue": decide_from_pct_error(e_blue, tolerance),
-                            "green": decide_from_pct_error(e_green, tolerance),
-                            "red": decide_from_pct_error(e_red, tolerance)
+                            "blue": decide_energy(pred_blue_j, tgt_blue_j, tolerance),
+                            "green": decide_energy(pred_green_j, tgt_green_j, tolerance),
+                            "red": decide_energy(pred_red_j, tgt_red_j, tolerance)
                         }
                         
                 LOGGER.info(
-                    f"[DECISION_TEMP] slot={slot} ref_ts={ref_ts}, notes: {notes} "
-                    f"meas_wm2(b/g/r)=({measured_blue:.4f},{measured_green:.4f},{measured_red:.4f}) "
-                    f"tgt_wm2(b/g/r)=({tgt_blue:.4f},{tgt_green:.4f},{tgt_red:.4f}) "
-                    f"pct_err(b/g/r)=({e_blue:.2f},{e_green:.2f},{e_red:.2f}) "
+                    f"[DECISION] slot={slot}, ref_ts={ref_ts}, notes: {notes} "
+                    f"remaining_s_in_slot: {remaining_s_in_slot:.4f}s "
+                    f"measured_W_m2(b/g/r): ({measured_blue:.4f}, {measured_green:.4f}, {measured_red:.4f}) "
+                    f"accumulated_j(b/g/r): ("
+                    f"{manager.accumulated_joules_by_band['blue']:.4f},"
+                    f"{manager.accumulated_joules_by_band['green']:.4f},"
+                    f"{manager.accumulated_joules_by_band['red']:.4f}) "
+                    f"predicted_j(b/g/r): ({pred_blue_j:.4f}, {pred_green_j:.4f}, {pred_red_j:.4f}) "
+                    f"target_j(b/g/r): ({tgt_blue_j:.4f}, {tgt_green_j:.4f}, {tgt_red_j:.4f}) "
                     f"decision={decision_out}"
                 )
 
@@ -687,23 +693,26 @@ def main():
                     "bands": {
                         "blue": {
                             "measured_wm2": measured_blue,
-                            "target_wm2": tgt_blue,
-                            "error_wm2" : (measured_blue - tgt_blue),
-                            "error_pct": e_blue,
+                            "target_mj_m2_hr": tgt_blue,
+                            "target_j_m2_hr": tgt_blue_j,
+                            "accumulated_j_m2_slot": manager.accumulated_joules_by_band["blue"],
+                            "predicted_j_m2_slot": pred_blue_j,
                             "decision": decision_out["blue"],
                         },
                         "green": {
                             "measured_wm2": measured_green,
-                            "target_wm2": tgt_green,
-                            "error_wm2" : (measured_green - tgt_green),
-                            "error_pct": e_green,
+                            "target_mj_m2_hr": tgt_green,
+                            "target_j_m2_hr": tgt_green_j,
+                            "accumulated_j_m2_slot": manager.accumulated_joules_by_band["green"],
+                            "predicted_j_m2_slot": pred_green_j,
                             "decision": decision_out["green"],
                         },
                         "red": {
                             "measured_wm2": measured_red,
-                            "target_wm2": tgt_red,
-                            "error_wm2" : (measured_red - tgt_red),
-                            "error_pct": e_red,
+                            "target_mj_m2_hr": tgt_red,
+                            "target_j_m2_hr": tgt_red_j,
+                            "accumulated_j_m2_slot": manager.accumulated_joules_by_band["red"],
+                            "predicted_j_m2_slot": pred_red_j,
                             "decision": decision_out["red"],
                         },
                     },

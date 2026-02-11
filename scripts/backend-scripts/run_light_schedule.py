@@ -254,7 +254,7 @@ class AckWaiter:
             return
 
 def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
-    cmd_topic, ack_topic, _data_topic = get_topics(zone)
+    cmd_topic, ack_topic, _data_topic, decision_topic = get_topics(zone)
     waiter = AckWaiter()
     client = mqtt.Client(
         client_id = f"run_scheduler_{uuid.uuid4().hex[:8]}",
@@ -522,6 +522,7 @@ def main():
         LOGGER.info(f"[RUN SCHEDULER] Run Failed due to an exception for run_id: {run_id}, status: FAILED")
     finally:
         conn.close()
+        
 
 if __name__ == "__main__":
     try:
@@ -530,4 +531,6 @@ if __name__ == "__main__":
         SystemExit(0)
     except Exception as e:
         LOGGER.error(f" FATAL: {e}")
+        stop_run(zone="zone1", run_id = "unknown_run_id_due_to_exception")
+        set_run_status(db_connect(), run_id="unknown_run_id_due_to_exception", status="FAILED", note=f"FATAL error in run scheduler: {e}")
         SystemExit(0)

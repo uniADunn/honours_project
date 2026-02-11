@@ -170,6 +170,13 @@ class PiManager:
         self.shutdown_requested = False
         self.run_id = None
         self.run_start_ts: datetime | None = None
+        self.current_slot: int | None = None
+        self.last_sample_ts: datetime | None = None
+        self.accumulated_joules_by_band = {
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+        }
         self.targets_by_slot: list | None = None
         self.sample_interval_s = 5
         self.seq = 0
@@ -370,12 +377,20 @@ def main():
 
         if ctype == "START":
             LOGGER.info(f"[PI MANAGER] Received START command: {run_id}, payload: {cmd}")
+            
             if not run_id:
                 manager.ack(client, {"type": "READY", "status": "ERROR", "detail": "missing run_id"})
                 return
             
             manager.run_id = str(run_id)
             manager.sample_interval_s = int(cmd.get("sample_interval_s", 5))
+            manager.current_slot = None
+            manager.last_sample_ts = None
+            manager.accumulated_joules_by_band = {
+                "blue": 0.0,
+                "green": 0.0,
+                "red": 0.0
+            }
             try:
                 manager.run_start_ts = parse_iso_utc(cmd.get("run_start_ts"))
                 targets = cmd.get("targets_by_slot")
@@ -449,6 +464,13 @@ def main():
             manager.targets_by_slot = None
             manager.run_start_ts = None
             manager.seq = 0
+            manager.current_slot = None
+            manager.last_sample_ts = None
+            manager.accumulated_joules_by_band = {
+                "blue": 0.0,
+                "green": 0.0,
+                "red": 0.0
+            }
             manager.ack(client, {"type": "STOPPED", "run_id": stopped_run, "source": SOURCE, "zone": ZONE, "status": "OK"})
             LOGGER.info(f"[PI MANAGER] Stopped run_id: {stopped_run}")
             print(f"[RUN] Stopped run_id: {stopped_run}")
@@ -471,6 +493,13 @@ def main():
             manager.targets_by_slot = None
             manager.run_start_ts = None
             manager.seq = 0
+            manager.current_slot = None
+            manager.last_sample_ts = None
+            manager.accumulated_joules_by_band = {
+                "blue": 0.0,
+                "green": 0.0,
+                "red": 0.0
+            }
             manager.ack(client, {
                 "type": "EXITING",
                 "run_id": stopped_run,
@@ -504,11 +533,28 @@ def main():
                         print(f"[MQTT] Flushed {flushed} buffered mssages during run. Remaining : {len(publish_buffer)}")
                 now_ts = datetime.now(timezone.utc)
 
+                if manager.last_sample_ts is None:
+                    dt = manager.sample_interval_s
+                else:
+                    dt = (now_ts - manager.last_sample_ts).total_seconds()
+
+                manager.last_sample_ts = now_ts
+                
+
                 if manager.run_start_ts is None:
                     LOGGER.error("[SLOT] run_start_ts is None but run_active = True. Forcing STOP state.")
                     manager.run_active = False
                     continue
                 slot = compute_slot(manager.run_start_ts, now_ts)
+
+                if manager.current_slot != slot:
+                    LOGGER.info(f"[SLOT] slot changed {manager.current_slot} -> {slot}")
+                    manager.current_slot = slot
+                    manager.accumulated_joules_by_band = {
+                        "blue": 0.0,
+                        "green": 0.0,
+                        "red": 0.0
+                    }
                 LOGGER.info(f"[SLOT] now: {now_ts.isoformat()}, run_start: {manager.run_start_ts.isoformat()}, slot: {slot}")
                 
                 payload, raw_channels = manager.build_payload()

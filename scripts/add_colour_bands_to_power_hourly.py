@@ -63,14 +63,14 @@ f_4000=(
 #     df[new_col] = df["ALLSKY_SFC_SW_DWN"] * f_750[band]
 
 for band in f_4000.keys():
-    new_col = f"{band}_W_m2_280_4000"
+    new_col = f"{band}_MJ_m2_hr_280_4000"
     df[new_col] = df["ALLSKY_SFC_SW_DWN"] * f_4000[band]
 
 
 #check which columns were added
 # added_cols_2500 = [c for c in df.columns if c.endswith("_W_m2_280_2500")]
 # added_cols_750 = [c for c in df.columns if c.endswith("_W_m2_280_750")]
-added_cols_4000 = [c for c in df.columns if c.endswith("_W_m2_280_4000")]
+added_cols_4000 = [c for c in df.columns if c.endswith("_MJ_m2_hr_280_4000")]
 
 # print(f"\nNew 280-2500 columns added: {added_cols_2500}")
 # print(f"New 280-750 columns added:  {added_cols_750}")

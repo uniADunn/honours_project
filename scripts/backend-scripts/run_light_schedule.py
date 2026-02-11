@@ -77,7 +77,8 @@ def get_topics(zone: str):
     cmd_topic = f"adunn/control/{zone}/cmd"
     ack_topic = f"adunn/control/{zone}/ack"
     data_topic = f"adunn/sensor/light/{zone}"
-    return cmd_topic, ack_topic, data_topic
+    decision_topic = f"adunn/control/{zone}/decision"
+    return cmd_topic, ack_topic, data_topic, decision_topic
 
 # mysql connection
 def db_connect():
@@ -193,7 +194,7 @@ def get_best_light_profile(conn, crop: str, country: str, year: int):
                         LPAD(HR, 2, '0'), ':00:00')
                     AS DATETIME(6)) AS ref_ts,
                     year, mo, dy, hr,
-                    blue_W_m2_280_4000, green_W_m2_280_4000, red_W_m2_280_4000
+                    blue_MJ_m2_hr_280_4000, green_MJ_m2_hr_280_4000, red_MJ_m2_hr_280_4000
                     FROM ref_spectral_hourly
                     WHERE UPPER(crop) = UPPER(%s)
                         AND UPPER(country) = UPPER(%s)
@@ -347,9 +348,9 @@ def build_target_slots(sliced_rows: list[tuple])->list[dict]:
     """
     sliced rows are tuples from get_best_light_profile() method
     ref_ts = index 0
-    blue_W_m2_280_4000 = index 5
-    green_W_m2_280_4000 = index 6
-    red_W_m2_280_4000 = index 7
+    blue_MJ_m2_hr_280_4000 = index 5
+    green_MJ_m2_hr_280_4000 = index 6
+    red_MJ_m2_hr_280_4000 = index 7
     """
     targets: list[dict] = []
 

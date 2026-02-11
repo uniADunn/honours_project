@@ -71,6 +71,7 @@ BROKER_PASSWORD = os.getenv("MQTT_PASSWORD")
 DATA_TOPIC = "adunn/sensor/light/zone1"
 CMD_TOPIC = "adunn/control/zone1/cmd"
 ACK_TOPIC = "adunn/control/zone1/ack"
+DECISION_TOPIC = "adunn/control/zone1/decision"
 
 SOURCE = "pi-01"
 ZONE = "ZONE1"
@@ -511,63 +512,76 @@ def main():
                 LOGGER.info(f"[SLOT] now: {now_ts.isoformat()}, run_start: {manager.run_start_ts.isoformat()}, slot: {slot}")
                 
                 payload, raw_channels = manager.build_payload()
-                decision = None
+                decision_out = {"blue": "HOLD", "green": "HOLD", "red": "HOLD"}
+                notes = None
+                ref_ts = None
+
+                tgt_blue = 0.0
+                tgt_green = 0.0
+                tgt_red = 0.0
+
+                measured_blue = 0.0
+                measured_green = 0.0
+                measured_red = 0.0
+
+                e_blue = 0.0
+                e_green = 0.0
+                e_red = 0.0
+
+                tolerance = float(manager.decision_policy.get("tolerance_pct", 5.0))
+                min_n = int(manager.decision_policy.get("min_samples_before_decision", 3))
+
                 if manager.targets_by_slot is None:
-                    LOGGER.warning(f"[SLOT] targets_by_slot is None during run. Skipping decision.")
+                    notes = "HOLD: targets_by_slot is None"
+                elif slot < 0 or slot >= len(manager.targets_by_slot):
+                    notes = f"HOLD: slot out of range (slot: {slot}, len: {len(manager.targets_by_slot)})"
                 else:
-                    if slot < 0 or slot >= len(manager.targets_by_slot):
-                        LOGGER.warning(f"[SLOT] Computed slot {slot} is outside target_by_slot_range (len: {len(manager.targets_by_slot)}). Holding decisions for this sample")
-                        decision = {"blue": "HOLD", "green": "HOLD", "red": "HOLD"}
+                    trow = manager.targets_by_slot[slot]
+                    ref_ts = trow.get("ref_ts")
+
+                    tgt = trow.get("target", {}) or {}
+
+                    tgt_blue = float(tgt.get("blue", 0.0))
+                    tgt_green = float(tgt.get("green", 0.0))
+                    tgt_red = float(tgt.get("red", 0.0))
+
+                    bands = bands_wm2_from_counts(
+                        c415 = raw_channels.get("as7341_415nm"),
+                        c445 = raw_channels.get("as7341_445nm"),
+                        c480 = raw_channels.get("as7341_480nm"),
+                        c515 = raw_channels.get("as7341_515nm"),
+                        c555 = raw_channels.get("as7341_555nm"),
+                        c590 = raw_channels.get("as7341_590nm"),
+                        c630 = raw_channels.get("as7341_630nm"),
+                        c680 = raw_channels.get("as7341_680nm"),
+                        gain_meas = float(raw_channels.get("as7341_gain") or AS7341_GAIN),
+                        it_meas_ms = float(raw_channels.get("as7341_it_ms") or 0),
+                    )
+
+                    measured_blue = float(bands.get("blue_W_m2") or 0.0)
+                    measured_green = float(bands.get("green_W_m2") or 0.0)
+                    measured_red = float(bands.get("red_W_m2") or 0.0)
+
+                    e_blue = safe_pct_error(measured_blue, tgt_blue)
+                    e_green = safe_pct_error(measured_green, tgt_green)
+                    e_red = safe_pct_error(measured_red, tgt_red)
+
+                    if manager.seq < min_n:
+                        notes = f"HOLD: seq: {manager.seq} < min_samples_before_decision {min_n}"
                     else:
-                        trow = manager.targets_by_slot[slot]
-                        tgt = trow.get("target", {}) or {}
-
-                        #reference targets (W/m2)
-                        tgt_blue = float(tgt.get("blue", 0.0))
-                        tgt_green = float(tgt.get("green", 0.0))
-                        tgt_red = float(tgt.get("red", 0.0))
-
-                        bands = bands_wm2_from_counts(
-                            c415 = raw_channels.get("as7341_415nm"),
-                            c445 = raw_channels.get("as7341_445nm"),
-                            c480 = raw_channels.get("as7341_480nm"),
-                            c515 = raw_channels.get("as7341_515nm"),
-                            c555 = raw_channels.get("as7341_555nm"),
-                            c590 = raw_channels.get("as7341_590nm"),
-                            c630 = raw_channels.get("as7341_630nm"),
-                            c680 = raw_channels.get("as7341_680nm"),
-                            gain_meas = float(raw_channels.get("as7341_gain") or AS7341_GAIN),
-                            it_meas_ms = float(raw_channels.get("as7341_it_ms") or 0),
-                        )
-
-                        #temp measured values from raw counts
-                        measured_blue = float(bands.get('blue_W_m2') or 0.0)
-                        measured_green = float(bands.get('green_W_m2') or 0.0)
-                        measured_red = float(bands.get('red_W_m2') or 0.0)
-                        tolerance = float(manager.decision_policy.get("tolerance_pct", 5.0))
-
-                        e_blue = safe_pct_error(measured_blue, tgt_blue)
-                        e_green = safe_pct_error(measured_green, tgt_green)
-                        e_red = safe_pct_error(measured_red, tgt_red)
-
-                        min_n = int(manager.decision_policy.get("min_samples_before_decision", 3))
-
-                        if manager.seq < min_n:
-                            decision = {"blue": "HOLD", "green": "HOLD", "red": "HOLD"}
-                        else:
-                            decision = {
-                                "blue": decide_from_pct_error(e_blue, tolerance),
-                                "green": decide_from_pct_error(e_green, tolerance),
-                                "red": decide_from_pct_error(e_red, tolerance)
-                            }
-                    
-                        LOGGER.info(
-                            f"[DECISION_TEMP] slot={slot} ref_ts={trow.get('ref_ts')} "
-                            f"meas_wm2(b/g/r)=({measured_blue:.4f},{measured_green:.4f},{measured_red:.4f}) "
-                            f"tgt_wm2(b/g/r)=({tgt_blue:.4f},{tgt_green:.4f},{tgt_red:.4f}) "
-                            f"pct_err(b/g/r)=({e_blue:.2f},{e_green:.2f},{e_red:.2f}) "
-                            f"decision={decision}"
-                        )
+                        decision_out = {
+                            "blue": decide_from_pct_error(e_blue, tolerance),
+                            "green": decide_from_pct_error(e_green, tolerance),
+                            "red": decide_from_pct_error(e_red, tolerance)
+                        }
+                        
+                LOGGER.info(
+                    f"[DECISION_TEMP] slot={slot} ref_ts={ref_ts}, notes: {notes} "
+                    f"meas_wm2(b/g/r)=({measured_blue:.4f},{measured_green:.4f},{measured_red:.4f}) "
+                    f"tgt_wm2(b/g/r)=({tgt_blue:.4f},{tgt_green:.4f},{tgt_red:.4f}) "
+                    f"pct_err(b/g/r)=({e_blue:.2f},{e_green:.2f},{e_red:.2f}) "
+                    f"decision={decision_out}"
+                )
 
                 if client.is_connected():
                     try:
@@ -580,11 +594,66 @@ def main():
                 else:
                     buffer_message(DATA_TOPIC, payload, qos=1, retain=False)
 
+                decision_payload = {
+                    "type": "DECISION",
+                    "source": SOURCE,
+                    "zone": ZONE,
+                    "run_id": manager.run_id,
+                    "run_seq": manager.seq,
+                    "ts": now_ts.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    "slot": slot,
+                    "ref_ts": ref_ts,
+                    "policy": {
+                        "tolerance_pct": tolerance,
+                        "min_samples_before_decision": min_n,
+                    },
+                    "bands": {
+                        "blue": {
+                            "measured_wm2": measured_blue,
+                            "target_wm2": tgt_blue,
+                            "error_wm2" : (measured_blue - tgt_blue),
+                            "error_pct": e_blue,
+                            "decision": decision_out["blue"],
+                        },
+                        "green": {
+                            "measured_wm2": measured_green,
+                            "target_wm2": tgt_green,
+                            "error_wm2" : (measured_green - tgt_green),
+                            "error_pct": e_green,
+                            "decision": decision_out["green"],
+                        },
+                        "red": {
+                            "measured_wm2": measured_red,
+                            "target_wm2": tgt_red,
+                            "error_wm2" : (measured_red - tgt_red),
+                            "error_pct": e_red,
+                            "decision": decision_out["red"],
+                        },
+                    },
+                }
+
+                if notes:
+                    decision_payload["notes"] = notes
+
+                decision_json = json.dumps(decision_payload)
+
+                if client.is_connected():
+                    try:
+                        info = client.publish(DECISION_TOPIC, decision_json, qos=1, retain=False)
+                        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                            buffer_message(DECISION_TOPIC, decision_json, qos=1, retain=False)
+                    except Exception as e:
+                        LOGGER.error(f"[MQTT] Publish failed for decision. Buffering. err: {e}")
+                        buffer_message(DECISION_TOPIC, decision_json, qos=1, retain=False)
+                else:
+                    buffer_message(DECISION_TOPIC, decision_json, qos=1, retain=False)
+
                 manager.seq += 1
                 time.sleep(manager.sample_interval_s)
 
             else:
                 time.sleep(0.2) # idle wait time
+
 
     except KeyboardInterrupt:
         LOGGER.warning("[PI MANAGER] User exit requested. shutting down")

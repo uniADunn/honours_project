@@ -694,7 +694,7 @@ def main():
                         "blue": {
                             "measured_wm2": measured_blue,
                             "target_mj_m2_hr": tgt_blue,
-                            "target_j_m2_hr": tgt_blue_j,
+                            "target_j_m2_slot_total": tgt_blue_j,
                             "accumulated_j_m2_slot": manager.accumulated_joules_by_band["blue"],
                             "predicted_j_m2_slot": pred_blue_j,
                             "decision": decision_out["blue"],
@@ -702,7 +702,7 @@ def main():
                         "green": {
                             "measured_wm2": measured_green,
                             "target_mj_m2_hr": tgt_green,
-                            "target_j_m2_hr": tgt_green_j,
+                            "target_j_m2_slot_total": tgt_green_j,
                             "accumulated_j_m2_slot": manager.accumulated_joules_by_band["green"],
                             "predicted_j_m2_slot": pred_green_j,
                             "decision": decision_out["green"],
@@ -710,7 +710,7 @@ def main():
                         "red": {
                             "measured_wm2": measured_red,
                             "target_mj_m2_hr": tgt_red,
-                            "target_j_m2_hr": tgt_red_j,
+                            "target_j_m2_slot_total": tgt_red_j,
                             "accumulated_j_m2_slot": manager.accumulated_joules_by_band["red"],
                             "predicted_j_m2_slot": pred_red_j,
                             "decision": decision_out["red"],

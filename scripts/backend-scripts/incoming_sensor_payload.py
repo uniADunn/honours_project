@@ -23,6 +23,7 @@ load_dotenv()
 MQTT_HOST = os.getenv('MQTT_HOST')
 MQTT_PORT = int(os.getenv('MQTT_PORT', 1883))
 MQTT_TOPIC = os.getenv('MQTT_TOPIC')
+MQTT_DECISION_TOPIC = os.getenv('MQTT_DECISION_TOPIC')
 MQTT_USER = os.getenv('MQTT_USER')
 MQTT_PASSWORD = os.getenv('MQTT_PASSWORD')
 
@@ -31,12 +32,13 @@ MYSQL_HOST = os.getenv('MYSQL_HOST', '127.0.0.1')
 MYSQL_PORT = int(os.getenv('MYSQL_PORT','3306'))
 MYSQL_DB = os.getenv('MYSQL_DB','crop_lighting')
 TABLE = os.getenv('TABLE','light_readings')
+DECISION_TABLE = os.getenv('DECISION_TABLE','spectral_band_decisions')
 
 MYSQL_USER = os.getenv('MYSQL_USER', 'root')
 MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD')
 
 # SQL Insert Statement
-INSERT_SQL = f"""
+INSERT_READINGS = f"""
 INSERT INTO {TABLE}(
     ts, source, zone, run_id, run_seq,
     as7341_dev_id, bh1750_dev_id,
@@ -59,6 +61,86 @@ INSERT INTO {TABLE}(
     %(blue_W_m2)s, %(green_W_m2)s, %(red_W_m2)s
     );
     """
+
+INSERT_DECISIONS_SQL = f"""
+INSERT INTO {DECISION_TABLE}(
+    run_id, run_seq, ts_utc, source, zone, slot, ref_ts,
+    tolerance_pct, min_sample_before_decision, notes,
+
+    blue_measured_W_m2,
+    blue_target_MJ_m2_hr,
+    blue_target_j__m2_slot_total,
+    blue_accumulated_j_m2_slot,
+    blue_predicted_j_m2_slot,
+    blue_decision,
+
+    green_measured_W_m2,
+    green_target_MJ_m2_hr,
+    green_target_j__m2_slot_total,
+    green_accumulated_j_m2_slot,
+    green_predicted_j_m2_slot,
+    green_decision,
+
+    red_measured_W_m2,
+    red_target_MJ_m2_hr,
+    red_target_j__m2_slot_total,
+    red_accumulated_j_m2_slot,
+    red_predicted_j_m2_slot,
+    red_decision
+)
+VALUES (
+    %(run_id)s, %(run_seq)s, %(ts_utc)s, %(source)s, %(zone)s, %(slot)s, %(ref_ts)s,
+    %(tolerance_pct)s, %(min_sample_before_decision)s, %(notes)s,
+
+    %(blue_measured_W_m2)s,
+    %(blue_target_MJ_m2_hr)s,
+    %(blue_target_j__m2_slot_total)s,
+    %(blue_accumulated_j_m2_slot)s,
+    %(blue_predicted_j_m2_slot)s,
+    %(blue_decision)s,
+
+    %(green_measured_W_m2)s,
+    %(green_target_MJ_m2_hr)s,
+    %(green_target_j__m2_slot_total)s,
+    %(green_accumulated_j_m2_slot)s,
+    %(green_predicted_j_m2_slot)s,
+    %(green_decision)s,
+
+    %(red_measured_W_m2)s,
+    %(red_target_MJ_m2_hr)s,
+    %(red_target_j__m2_slot_total)s,
+    %(red_accumulated_j_m2_slot)s,
+    %(red_predicted_j_m2_slot)s,
+    %(red_decision)s
+)
+ON DUPLICATE KEY UPDATE
+    ts_utc = VALUES(ts_utc),
+    ref_ts = VALUES(ref_ts),
+    tolerance_pct = VALUES(tolerance_pct),
+    min_sample_before_decision = VALUES(min_sample_before_decision),
+    notes = VALUES(notes),
+
+    blue_measured_W_m2 = VALUES(blue_measured_W_m2),
+    blue_target_MJ_m2_hr = VALUES(blue_target_MJ_m2_hr),
+    blue_target_j__m2_slot_total = VALUES(blue_target_j__m2_slot_total),
+    blue_accumulated_j_m2_slot = VALUES(blue_accumulated_j_m2_slot),
+    blue_predicted_j_m2_slot = VALUES(blue_predicted_j_m2_slot),
+    blue_decision = VALUES(blue_decision),
+
+    green_measured_W_m2 = VALUES(green_measured_W_m2),
+    green_target_MJ_m2_hr = VALUES(green_target_MJ_m2_hr),
+    green_target_j__m2_slot_total = VALUES(green_target_j__m2_slot_total),
+    green_accumulated_j_m2_slot = VALUES(green_accumulated_j_m2_slot),
+    green_predicted_j_m2_slot = VALUES(green_predicted_j_m2_slot),
+    green_decision = VALUES(green_decision),
+
+    red_measured_W_m2 = VALUES(red_measured_W_m2),
+    red_target_MJ_m2_hr = VALUES(red_target_MJ_m2_hr),
+    red_target_j__m2_slot_total = VALUES(red_target_j__m2_slot_total),
+    red_accumulated_j_m2_slot = VALUES(red_accumulated_j_m2_slot),
+    red_predicted_j_m2_slot = VALUES(red_predicted_j_m2_slot),
+    red_decision = VALUES(red_decision);
+"""
 
 def setup_console_logger() -> logging.Logger:
     logger = logging.getLogger("backend_ingestion")
@@ -172,6 +254,91 @@ if not MYSQL_PASSWORD:
 
 LOGGER.info(f"[CONFIG] Reference Irradiance E_ref = {spectral_conversion.E_REF_W_M2} W/m2")
 
+def handle_decision_message(userdata, data: dict) -> None:
+    run_id = (data.get("run_id") or "").strip()
+    if not run_id:
+        return
+    
+    run_seq = as_int_or_none(data.get("run_seq"))
+    slot = as_int_or_none(data.get("slot"))
+    source = data.get("source")
+    zone = data.get("zone")
+
+    ts_in = (data.get("ts") or "").strip()
+    if ts_in.endswith("Z"):
+        ts_in = ts_in.replace("Z", "+00:00")
+
+    try:
+        ts_dt = datetime.fromisoformat(ts_in)
+        ts_utc = ts_dt.replace(tzinfo=None)
+    except Exception as e:
+        LOGGER.error(f"[DECISION] Invalid timestamp: {data.get('ts')!r} err: {e}")
+        return
+    
+    ref_ts_in = data.get("ref_ts")
+    ref_ts = None
+
+    if ref_ts_in:
+        try:
+            s = str(ref_ts_in).strip()
+            if s.endswith("Z"):
+                s = s.replace("Z", "+00:00")
+
+            ref_ts = datetime.fromisoformat(s).replace(tzinfo=None)
+        except Exception:
+            ref_ts = None
+
+    policy = data.get("policy") or {}
+    tolerance_pct = as_float_or_none(policy.get("tolerance_pct"))
+    min_n = as_int_or_none(policy.get("min_samples_before_decision"))
+
+    bands = data.get("bands") or {}
+    blue = bands.get("blue") or {}
+    green = bands.get("green") or {}
+    red = bands.get("red") or {}
+
+    row = {
+        "run_id": run_id,
+        "run_seq": run_seq,
+        "ts_utc": ts_utc,
+        "source": str(source) if source is not None else None,
+        "zone": str(zone).strip().lower() if isinstance(zone, str) else zone,
+        "slot": slot,
+        "ref_ts": ref_ts,
+        "tolerance_pct": tolerance_pct,
+        "min_samples_before_decision": min_n,
+        "notes": data.get("notes"),
+
+        "blue_measured_W_m2": as_float_or_none(blue.get("measured_wm2")),
+        "blue_target_MJ_m2_hr": as_float_or_none(blue.get("target_mj_m2_hr")),
+        "blue_target_j_m2_slot_total": as_float_or_none(blue.get("target_j_m2_slot_total")),
+        "blue_accumulated_j_m2_slot": as_float_or_none(blue.get("accumulated_j_m2_slot")),
+        "blue_predicted_j_m2_slot": as_float_or_none(blue.get("predicted_j_m2_slot")),
+        "blue_decision": blue.get("decision"),
+
+        "green_measured_W_m2": as_float_or_none(green.get("measured_wm2")),
+        "green_target_MJ_m2_hr": as_float_or_none(green.get("target_mj_m2_hr")),
+        "green_target_j_m2_slot_total": as_float_or_none(green.get("target_j_m2_slot_total")),
+        "green_accumulated_j_m2_slot": as_float_or_none(green.get("accumulated_j_m2_slot")),
+        "green_predicted_j_m2_slot": as_float_or_none(green.get("predicted_j_m2_slot")),
+        "green_decision": green.get("decision"),
+
+        "red_measured_W_m2": as_float_or_none(red.get("measured_wm2")),
+        "red_target_MJ_m2_hr": as_float_or_none(red.get("target_mj_m2_hr")),
+        "red_target_j_m2_slot_total": as_float_or_none(red.get("target_j_m2_slot_total")),
+        "red_accumulated_j_m2_slot": as_float_or_none(red.get("accumulated_j_m2_slot")),
+        "red_predicted_j_m2_slot": as_float_or_none(red.get("predicted_j_m2_slot")),
+        "red_decision": red.get("decision"),
+    }
+    
+    if row["run_seq"] is None or row["slot"] is None:
+        LOGGER.error(f"[DECISION] Missing run_seq or slot: run_seq: {row['run_seq']!r}, slot: {row['slot']!r}")
+        return
+    
+    ok = db_insert_decision_with_reconnect(userdata, row)
+    if ok:
+        LOGGER.info(f"[DB] Decision inserted: run_id: {run_id}, run_seq: {run_seq}, slot: {slot}")
+
 def as_float_or_none(value):
     try:
         if value is None:
@@ -212,10 +379,10 @@ def db_connect_forever():
             time.sleep(backoff_s)
             backoff_s = min(backoff_s * 2, 60)
 
-def db_insert_with_reconnect(userdata, row):
+def db_insert_readings_with_reconnect(userdata, row):
     for attempt in (1,2):
         try:
-            userdata["db_cursor"].execute(INSERT_SQL, row)
+            userdata["db_cursor"].execute(INSERT_READINGS, row)
 
             userdata["ok_inserts"] = userdata.get("ok_inserts", 0) + 1
             now = time.time()
@@ -259,6 +426,44 @@ def db_insert_with_reconnect(userdata, row):
                     return False
             return False
 
+def db_insert_decision_with_reconnect(userdata, row):
+    for attempt in (1,2):
+        try:
+            userdata["db_cursor"].execute(INSERT_DECISIONS_SQL, row)
+            userdata["db_conn"].commit()
+            return True
+        
+        except Error as e:
+            errno = getattr(e, "errno", None)
+            if errno == 1452:
+                LOGGER.error(f"[DB] Foreign key constraint failed on decision insert. Check that 'source', 'zone', and 'run_id' exist.")
+                return False
+            
+            LOGGER.error(f"[DB] Decision insert failed: {e}. Attempt {attempt}/2...")
+
+            #try reconnecting
+            if attempt == 1:
+                try:
+                    try:
+                        userdata["db_cursor"].close()
+                    except Exception:
+                        pass
+                    try:
+                        userdata["db_conn"].close()
+                    except Exception:
+                        pass
+
+                    conn, cur  = db_connect_forever()
+                    userdata["db_conn"] = conn
+                    userdata["db_cursor"] = cur
+
+                    LOGGER.info("[DB] Reconnected after decision insert failure. Retrying insert once...")
+                    continue
+                except Exception as reconnect_err:
+                    LOGGER.error(f"[DB] Reconnection failed: {reconnect_err}.")
+                    return False
+            return False
+
 # MQTT Callbacks
 def on_connect(client, userdata, flags, reason_code, properties=None):
     session_present = None
@@ -269,12 +474,18 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 
     LOGGER.info(f"[MQTT] Connected reason_code: {reason_code}, session_present: {session_present}")
     client.subscribe(MQTT_TOPIC, qos=1)
+    client.subscribe(MQTT_DECISION_TOPIC, qos=1)
+    LOGGER.info(f"[MQTT] Subscribed to topics: {MQTT_TOPIC}, {MQTT_DECISION_TOPIC}")
 
 def on_message(client, userdata, msg):
     raw = msg.payload.decode("utf-8", errors="replace")
 
     try:
         data = json.loads(raw)
+        msg_type = data.get("type")
+        if msg_type == "DECISION":
+            handle_decision_message(userdata, data)
+            return
     except json.JSONDecodeError as e:
         LOGGER.error(f"[MQTT] invalid JSON on topic {msg.topic}:\n error: {e}\n payload = {raw!r}")
         #print(f"[mqtt] invalid JSON on topic {msg.topic}: {e} | payload = {raw!r}")
@@ -355,7 +566,7 @@ def on_message(client, userdata, msg):
     }
 
     try:
-       ok = db_insert_with_reconnect(userdata, row)
+       ok = db_insert_readings_with_reconnect(userdata, row)
        if not ok:
             return
     except Error as e:

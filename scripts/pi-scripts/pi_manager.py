@@ -612,6 +612,24 @@ def main():
                     manager.accumulated_joules_by_band["green"] += (measured_green * dt)
                     manager.accumulated_joules_by_band["red"] += (measured_red * dt)
 
+                    tgt_blue_j = tgt_blue * 1_000_000.0
+                    tgt_green_j = tgt_green * 1_000_000.0
+                    tgt_red_j = tgt_red * 1_000_000.0
+
+                    #seconds remaining in current slot (hour)
+                    elapsed_s_in_slot = (now_ts - manager.run_start_ts).total_seconds() % 3600.0
+                    remaining_s_in_slot = max(0.0, 3600.0 - elapsed_s_in_slot)
+
+                    #predicted total energy by the end of the hour assuming curreent irradiance holds
+                    pred_blue_j = manager.accumulated_joules_by_band["blue"] + (measured_blue * remaining_s_in_slot)
+                    pred_green_j = manager.accumulated_joules_by_band["green"] + (measured_green * remaining_s_in_slot)
+                    pred_red_j = manager.accumulated_joules_by_band["red"] + (measured_red * remaining_s_in_slot)
+
+                    LOGGER.info(
+                        f"[PREDICTION] slot: {slot}, remaining_s_in_slot: {remaining_s_in_slot:.1f}s "
+                        f"proj_j(b/g/r)=({pred_blue_j:.4f}, {pred_green_j:.4f}, {pred_red_j:.4f}) "
+                        f"tgt_j(b/g/r)=({tgt_blue_j:.4f}, {tgt_green_j:.4f}, {tgt_red_j:.4f}) "
+                    )
                     LOGGER.info(
                         f"[ACCUM] slot: {slot} "
                         f"accumulated_Joules(b/g/r)=("

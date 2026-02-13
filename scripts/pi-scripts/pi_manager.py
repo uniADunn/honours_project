@@ -84,6 +84,10 @@ AS7341_GAIN = 64  # 64X gain; for database
 AS7341_ATIME = 0
 AS7341_ASTEP = 9999
 
+WM2_EPS = 0.01  # BELOW THIS, TREAT AS DARK
+TARGET_J_EPS = 50.0 #BELOW THIS, TREAT TARGET AS ZERO
+OUTPUT_STEP_PCT = 5.0 # VIRTUAL STEP PER SAMPLE
+
 #in memory publish buffer
 MAX_BUFFERED_MSGS = 2000 # 2000 msgs @ 5s interval ~= 2.5 hours
 publish_buffer = deque(maxlen=MAX_BUFFERED_MSGS)
@@ -159,6 +163,35 @@ def decide_energy(pred_j: float, tgt_j: float, tolerance_pct: float) -> str:
     else:
         return "HOLD"
 
+def clamp_action_decision(
+        raw_decision: str,
+        measured_wm2: float,
+        target_j: float,
+        output_level_pct: float
+    ) -> tuple[str, list[str]]:
+    reasons = list[str] = []
+    final = raw_decision
+
+    if raw_decision == "DECREASE" and measured_wm2 <= WM2_EPS:
+        final = "HOLD"
+        reasons.append("measured irradiance is below threshold, treating as dark.")
+    
+    if target_j <= TARGET_J_EPS and measured_wm2 <=WM2_EPS:
+        if final != "HOLD":
+            final = "HOLD"
+            reasons.append("target energy is effectively zero and dark.")
+
+    #virtual output saturation clamps
+    if raw_decision == "DECREASE" and output_level_pct <= 0.0:
+        final = "HOLD"
+        reasons.append("output already at 0%, cannot decrease further.")
+
+    if raw_decision == "INCREASE" and output_level_pct >= 100.0:
+        final = "HOLD"
+        reasons.append("output already at 100%, cannot increase further.")
+
+    return final, reasons
+
 class PiManager:
     def __init__(self):
         self.i2c = None
@@ -184,6 +217,11 @@ class PiManager:
             "tolerance_pct": 20.0,
             "min_samples_before_decision": 3
         }
+        self.output_level_pct = {
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+        }
 
     def reset_run(self) -> None:
         self.run_active = False
@@ -194,6 +232,11 @@ class PiManager:
         self.current_slot = None
         self.last_sample_ts = None
         self.accumulated_joules_by_band = {
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+        }
+        self.output_level_pct = {
             "blue": 0.0,
             "green": 0.0,
             "red": 0.0
@@ -217,6 +260,11 @@ class PiManager:
             "green": 0.0, 
             "red": 0.0
         }
+        self.output_level_pct = {
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+        }        
 
     def parse_start_cmd(self, cmd: dict) -> tuple[bool, str, dict]:
         run_id = cmd.get("run_id")
@@ -558,149 +606,6 @@ def main():
             return
         
         manager.handle_cmd(client, cmd)
-        
-        # ctype = str(cmd.get("type", "")).upper()
-        # run_id = cmd.get("run_id")
-
-        # if ctype == "START":
-        #     LOGGER.info(f"[PI MANAGER] Received START command: {run_id}, payload: {cmd}")
-            
-        #     if not run_id:
-        #         manager.ack(client, {"type": "READY", "status": "ERROR", "detail": "missing run_id"})
-        #         return
-            
-        #     manager.run_id = str(run_id)
-        #     manager.sample_interval_s = int(cmd.get("sample_interval_s", 5))
-        #     manager.current_slot = None
-        #     manager.last_sample_ts = None
-        #     manager.accumulated_joules_by_band = {
-        #         "blue": 0.0,
-        #         "green": 0.0,
-        #         "red": 0.0
-        #     }
-        #     try:
-        #         manager.run_start_ts = parse_iso_utc(cmd.get("run_start_ts"))
-        #         targets = cmd.get("targets_by_slot")
-        #         manager.decision_policy = cmd.get("decision_policy") or {"tolerance_pct": 5.0, "min_samples_before_decision": 3}
-        #         if not isinstance(targets, list) or len(targets) == 0:
-        #             manager.ack(client, {
-        #                 "type": "READY",
-        #                 "run_id": manager.run_id,
-        #                 "source": SOURCE,
-        #                 "zone": ZONE,
-        #                 "status": "ERROR",
-        #                 "detail": "missing or invalid targets_by_slot (must be non-empty list)"
-        #             })
-        #             return
-        #         manager.targets_by_slot = targets
-        #         LOGGER.info(f"[SCHEDULER] RECEIVED TARGET_BY_SLOT: {len(manager.targets_by_slot)}, first_ref_ts: {manager.targets_by_slot[0].get('ref_ts')}")
-        #     except Exception as e:
-        #         manager.ack(client, {
-        #             "type": "READY",
-        #             "run_id": manager.run_id,
-        #             "source": SOURCE,
-        #             "zone": ZONE,
-        #             "status": "ERROR",
-        #             "detail": f"missing/invalid run_start_ts: {e}"
-        #         })
-        #         return
-
-        #     ok, detail = manager.init_sensors()
-        #     if not ok:
-        #         LOGGER.error(f"[PI MANAGER] {detail}")
-        #         manager.run_active = False
-        #         manager.ack(client, {
-        #             "type": "READY",
-        #             "run_id": manager.run_id,
-        #             "source": SOURCE,
-        #             "zone": ZONE,
-        #             "status": "ERROR",
-        #             "detail": detail
-        #         })
-        #         return
-        #     LOGGER.warning(f"[PI MANAGER] {detail}")
-        #     manager.seq = 0
-        #     manager.run_active = True
-        #     manager.ack(client, {
-        #         "type": "READY",
-        #         "run_id": manager.run_id,
-        #         "run_start_ts": manager.run_start_ts.isoformat().replace("+00:00", "Z"),
-        #         "source": SOURCE,
-        #         "zone": ZONE,
-        #         "status": "OK",
-        #         "detail": detail
-        #     })
-        #     LOGGER.info(f"[PI MANAGER] Started run_id: {manager.run_id}, sample interval: {manager.sample_interval_s}s")
-        #     print(f"[RUN] Started run_id: {manager.run_id}, sample interval: {manager.sample_interval_s}s")
-
-        # elif(ctype == "STOP"):
-        #     if run_id and manager.run_id and str(run_id) != manager.run_id:
-        #         manager.ack(client, {
-        #             "type": "STOPPED",
-        #             "run_id": manager.run_id,
-        #             "source": SOURCE,
-        #             "zone": ZONE,
-        #             "status": "ERROR",
-        #             "detail": f"run_id mismatch: received {run_id}, current {manager.run_id}"
-        #         })
-        #         LOGGER.error(f"run_id mismatch: received {run_id}, current {manager.run_id}")
-        #         return
-        #     manager.run_active = False
-        #     stopped_run = manager.run_id
-        #     manager.run_id = None
-        #     manager.targets_by_slot = None
-        #     manager.run_start_ts = None
-        #     manager.seq = 0
-        #     manager.current_slot = None
-        #     manager.last_sample_ts = None
-        #     manager.accumulated_joules_by_band = {
-        #         "blue": 0.0,
-        #         "green": 0.0,
-        #         "red": 0.0
-        #     }
-        #     manager.ack(client, {"type": "STOPPED", "run_id": stopped_run, "source": SOURCE, "zone": ZONE, "status": "OK"})
-        #     LOGGER.info(f"[PI MANAGER] Stopped run_id: {stopped_run}")
-        #     print(f"[RUN] Stopped run_id: {stopped_run}")
-        # elif ctype == "EXIT":
-        #     if run_id and manager.run_id and str(run_id) != manager.run_id:
-        #         manager.ack(client, {
-        #             "type": "EXITING",
-        #             "run_id": manager.run_id,
-        #             "source": SOURCE,
-        #             "zone": ZONE,
-        #             "status": "ERROR",
-        #             "detail": f"run_id mismatch: received {run_id}, current {manager.run_id}",
-        #         })
-        #         LOGGER.error(f"[PI MANAGER] run_id mismatch: received {run_id}, current {manager.run_id}")
-        #         return
-        #     manager.run_active = False
-        #     manager.shutdown_requested = True
-        #     stopped_run = manager.run_id
-        #     manager.run_id = None
-        #     manager.targets_by_slot = None
-        #     manager.run_start_ts = None
-        #     manager.seq = 0
-        #     manager.current_slot = None
-        #     manager.last_sample_ts = None
-        #     manager.accumulated_joules_by_band = {
-        #         "blue": 0.0,
-        #         "green": 0.0,
-        #         "red": 0.0
-        #     }
-        #     manager.ack(client, {
-        #         "type": "EXITING",
-        #         "run_id": stopped_run,
-        #         "source": SOURCE,
-        #         "zone": ZONE,
-        #         "status": "OK",
-        #         "detail": "shutting down"
-        #     })
-        #     LOGGER.info(f"[PI MANAGER] Shutdown requested for run_id: {stopped_run}")
-        #     print(f"[RUN] Shutdown requested for run_id: {stopped_run}")
-        # else:
-        #     LOGGER.error(f"[PI MANAGER] Unknown Command Type: {cmd}")
-        #     print(f"[CMD] unknown command type: {cmd}")
-
 
 
     client.on_connect = on_connect
@@ -719,7 +624,7 @@ def main():
                     flushed = flush_buffer(client)
                     if flushed:
                         LOGGER.info(f"[PI MANAGER] Flushed {flushed} buffered messages during run. Remaining: {len(publish_buffer)}")
-                        print(f"[MQTT] Flushed {flushed} buffered mssages during run. Remaining : {len(publish_buffer)}")
+                        print(f"[MQTT] Flushed {flushed} buffered messages during run. Remaining : {len(publish_buffer)}")
                 now_ts = datetime.now(timezone.utc)
 
                 if manager.last_sample_ts is None:
@@ -836,11 +741,39 @@ def main():
                     if manager.seq < min_n:
                         notes = f"HOLD: seq: {manager.seq} < min_samples_before_decision {min_n}"
                     else:
-                        decision_out = {
+                        raw_decision = {
                             "blue": decide_energy(pred_blue_j, tgt_blue_j, tolerance),
                             "green": decide_energy(pred_green_j, tgt_green_j, tolerance),
                             "red": decide_energy(pred_red_j, tgt_red_j, tolerance)
                         }
+
+                        decision_out = {}
+                        decision_reasons = {}
+                        
+                        band_map = {
+                            "blue": (measured_blue, tgt_blue_j),
+                            "green": (measured_green, tgt_green_j),
+                            "red": (measured_red, tgt_red_j)
+                        }
+
+                        for band, (meas_wm2, target_j) in band_map.items():
+                            out_lvl = float(manager.output_level_pct.get(band, 0.0))
+
+                            final, reasons = clamp_action_decision(
+                                raw_decision = raw_decision[band],
+                                measured_wm2 = meas_wm2,
+                                target_j = target_j,
+                                output_level_pct = out_lvl,
+                            )
+
+                            if final == "INCREASE":
+                                out_lvl = min(100.0, out_lvl + OUTPUT_STEP_PCT)
+                            elif final == "DECREASE":
+                                out_lvl = max(0.0, out_lvl - OUTPUT_STEP_PCT)
+                            
+                            manager.output_level_pct[band] = out_lvl
+                            decision_out[band] = final
+                            decision_reasons[band] = reasons
                         
                 LOGGER.info(
                     f"[DECISION] slot={slot}, ref_ts={ref_ts}, notes: {notes} "
@@ -886,7 +819,11 @@ def main():
                             "target_j_m2_slot_total": tgt_blue_j,
                             "accumulated_j_m2_slot": manager.accumulated_joules_by_band["blue"],
                             "predicted_j_m2_slot": pred_blue_j,
+                            
                             "decision": decision_out["blue"],
+                            "decision_raw": raw_decision.get("blue") if manager.seq >= min_n else "HOLD",
+                            "decision_reasons": decision_reasons.get("blue", []),
+                            "output_level_pct": manager.output_level_pct["blue"]
                         },
                         "green": {
                             "measured_wm2": measured_green,
@@ -895,6 +832,9 @@ def main():
                             "accumulated_j_m2_slot": manager.accumulated_joules_by_band["green"],
                             "predicted_j_m2_slot": pred_green_j,
                             "decision": decision_out["green"],
+                            "decision_raw": raw_decision.get("green") if manager.seq >= min_n else "HOLD",
+                            "decision_reasons": decision_reasons.get("green", []),
+                            "output_level_pct": manager.output_level_pct["green"]
                         },
                         "red": {
                             "measured_wm2": measured_red,
@@ -903,6 +843,9 @@ def main():
                             "accumulated_j_m2_slot": manager.accumulated_joules_by_band["red"],
                             "predicted_j_m2_slot": pred_red_j,
                             "decision": decision_out["red"],
+                            "decision_raw": raw_decision.get("red") if manager.seq >= min_n else "HOLD",
+                            "decision_reasons": decision_reasons.get("red", []),
+                            "output_level_pct": manager.output_level_pct["red"]
                         },
                     },
                 }

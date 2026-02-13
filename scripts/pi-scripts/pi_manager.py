@@ -169,7 +169,7 @@ def clamp_action_decision(
         target_j: float,
         output_level_pct: float
     ) -> tuple[str, list[str]]:
-    reasons = list[str] = []
+    reasons: list[str] = []
     final = raw_decision
 
     if raw_decision == "DECREASE" and measured_wm2 <= WM2_EPS:
@@ -269,7 +269,7 @@ class PiManager:
     def parse_start_cmd(self, cmd: dict) -> tuple[bool, str, dict]:
         run_id = cmd.get("run_id")
         if not run_id:
-            return False, "missing run_id"
+            return False, "missing run_id", {}
         
         try:
             run_start_ts = parse_iso_utc(cmd.get("run_start_ts"))
@@ -653,6 +653,7 @@ def main():
                 
                 payload, raw_channels = manager.build_payload()
                 decision_out = {"blue": "HOLD", "green": "HOLD", "red": "HOLD"}
+                decision_reasons = {"blue": [], "green":[], "red":[]}
                 notes = None
                 ref_ts = None
 

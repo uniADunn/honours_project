@@ -218,9 +218,9 @@ class PiManager:
             "min_samples_before_decision": 3
         }
         self.output_level_pct = {
-            "blue": 0.0,
-            "green": 0.0,
-            "red": 0.0
+            "blue": 20.0,
+            "green": 20.0,
+            "red": 20.0
         }
 
     def reset_run(self) -> None:

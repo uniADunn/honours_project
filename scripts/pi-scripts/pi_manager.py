@@ -185,6 +185,191 @@ class PiManager:
             "min_samples_before_decision": 3
         }
 
+    def reset_run(self) -> None:
+        self.run_active = False
+        self.run_id = None
+        self.targets_by_slot = None
+        self.run_start_ts = None
+        self.seq = 0
+        self.current_slot = None
+        self.last_sample_ts = None
+        self.accumulated_joules_by_band = {
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+        }
+
+    def init_run(self, run_id: str, run_start_ts: datetime, targets_by_slot: list,
+                 decision_policy: dict, sample_interval_s: int) -> None:
+        
+        self.run_id = str(run_id)
+        self.sample_interval_s = sample_interval_s
+        self.run_start_ts = run_start_ts
+        self.targets_by_slot = targets_by_slot
+        self.decision_policy = decision_policy
+
+        self.seq = 0
+        self.run_active = False
+        self.current_slot = None
+        self.last_sample_ts = None
+        self.accumulated_joules_by_band = {
+            "blue": 0.0,
+            "green": 0.0, 
+            "red": 0.0
+        }
+
+    def parse_start_cmd(self, cmd: dict) -> tuple[bool, str]:
+        run_id = cmd.get("run_id")
+        if not run_id:
+            return False, "missing run_id"
+        
+        try:
+            run_start_ts = parse_iso_utc(cmd.get("run_start_ts"))
+        except Exception as e:
+            return False, f"invalid run_start_ts: {e}", {}
+        
+        targets = cmd.get("targets_by_slot")
+        if not isinstance(targets, list) or len(targets) == 0:
+            return False, "missing or invalid targets_by_slot (must not be an empty list)", {}
+        
+        sample_interval_s = int(cmd.get("sample_interval_s", 5)) # default to 5s interval
+        decision_policy = cmd.get("decision_policy") or {"tolerance_pct": 5.0, "min_samples_before_decision": 6}
+
+        return True, "OK", {
+            "run_id": str(run_id),
+            "run_start_ts": run_start_ts,
+            "targets_by_slot": targets,
+            "sample_interval_s": sample_interval_s,
+            "decision_policy": decision_policy
+        }
+    
+    def handle_cmd(self, client: mqtt.Client, cmd: dict) -> None:
+        ctype = str(cmd.get("type", "")).upper()
+        if ctype == "START":
+            self.handle_start_cmd(client, cmd)
+        elif ctype == "STOP":
+            self.handle_stop_cmd(client, cmd)
+        elif ctype == "Exit":
+            self.handle_exit_cmd(client, cmd)
+        else:
+            LOGGER.error(f"[PI MANAGER] Unknown Command Type: {cmd}")
+            print(f"[CMD] Unknown Command Type: {cmd}")
+
+    def handle_start_cmd(self, client: mqtt.Client, cmd: dict) -> None:
+        ok, detail, parsed = self.parse_start_cmd(cmd)
+        run_id = parsed.get("run_id") if parsed else cmd.get("run_id")
+
+        LOGGER.info(f"[PI MANAGER] Received START command: {run_id}, payload: {cmd}")
+
+        if not ok:
+            self.ack(client, {
+                "type": "READY",
+                "status": "ERROR",
+                "detail": detail
+            })
+            return
+        self.init_run(
+            run_id = parsed["run_id"],
+            sample_interval_s = parsed["sample_interval_s"],
+            run_start_ts = parsed["run_start_ts"],
+            targets_by_slot= parsed["targets_by_slot"],
+            decision_policy = parsed["decision_policy"]
+        )
+
+        LOGGER.info(f"[SCHEDULER] Received tartgets_by_slot: {len(self.targets_by_slot)}, first_ref_ts: {self.targets_by_slot[0].get('ref_ts')}")
+
+        ok_sensors, sensor_detail = self.init_sensors()
+        if not ok_sensors:
+            LOGGER(f"[PI MANAGER] {sensor_detail}")
+            self.reset_run()
+            self.ack(client, {
+                "type": "READY",
+                "run_id": parsed["run_id"],
+                "source": SOURCE,
+                "zone": ZONE,
+                "status": "ERROR",
+                "detail": sensor_detail
+            })
+            return
+        LOGGER.warning(f"[PI MANAGER] {sensor_detail}")
+
+        self.run_active = True
+
+        self.ack(client, {
+            "type": "READY",
+            "run_id": self.run_id,
+            "run_start_ts": self.run_start_ts.isoformat().replace("+00:00", "Z"),
+            "source": SOURCE,
+            "zone": ZONE,
+            "status": "OK",
+            "detail": sensor_detail
+        })
+
+        LOGGER.info(f"[PI MANAGER] Started run_id: {self.run_id}, sample interval: {self.sample_interval_s}s")
+        print(f"[RUN] Started run_id: {self.run_id}, sample interval: {self.sample_interval_s}s")
+
+    def _check_run_id_match(self, cmd_run_id: str) -> tuple[bool, str]:
+        if cmd_run_id and self.run_id and str(cmd_run_id) != self.run_id:
+            return False, f"run_id mismatch: received {cmd_run_id}, current{self.run_id}"
+        return True, "OK"
+    
+    def handle_stop_cmd(self, client: mqtt.Client, cmd: dict) -> None:
+        ok, detail = self._check_run_id_match(cmd.get("run_id"))
+        if not ok:
+            self.ack(client, {
+                "type": "STOPPED", 
+                "run_id": self.run_id,
+                "source": SOURCE,
+                "zone": ZONE,
+                "status": "ERROR",
+                "detail": detail
+            })
+            LOGGER.error(f"[PI MANAGER] {detail}")
+            return
+        
+        stopped_run = self.run_id
+        self.reset_run()
+        
+        self.ack(client, {
+            "type": "STOPPED",
+            "run_id": stopped_run,
+            "source": SOURCE,
+            "zone": ZONE,
+            "status": "OK",
+            "detail": "run stopped successfully"
+        })
+        LOGGER.info(f"[PI MANAGER] stopped run_id: {stopped_run}")
+        print(f"[RUN] Stopped run_id: {stopped_run}")
+
+    def handle_exit_cmd(self, client: mqtt.Client, cmd: dict) -> None:
+        ok, detail = self._check_run_id_match(cmd.get("run_id"))
+        if not ok:
+            self.ack(client, {
+                "type": "EXITING",
+                "run_id": self.run_id,
+                "source": SOURCE,
+                "zone": ZONE,
+                "status": "ERROR",
+                "detail": detail
+            })
+            LOGGER.error(detail)
+            return
+        
+        stopped_run = self.run_id
+        self.reset_run()
+        self.shutdown_requested = True
+        
+        self.ack(client, {
+            "type": "EXITING",
+            "run_id": stopped_run,
+            "source": SOURCE,
+            "zone": ZONE,
+            "status": "OK",
+            "detail": "shutting down"
+        })
+        LOGGER.info(f"[PI MANAGER] Shutdown requested for run_id: {stopped_run}")
+        print(f"[RUN] Shutdown requested for run_id: {stopped_run}")
+
     def init_sensors(self) -> tuple[bool, str]:
         try:
             if self.i2c is None:
@@ -368,151 +553,155 @@ def main():
         raw = msg.payload.decode("utf-8", errors="replace")
         try:
             cmd = json.loads(raw)
-        except Exception as e:
+        except Exception:
             LOGGER.error(f"[CMD] invalid json: {raw}")
             return
         
-        ctype = str(cmd.get("type", "")).upper()
-        run_id = cmd.get("run_id")
+        manager.handle_cmd(client, cmd)
+        
+        # ctype = str(cmd.get("type", "")).upper()
+        # run_id = cmd.get("run_id")
 
-        if ctype == "START":
-            LOGGER.info(f"[PI MANAGER] Received START command: {run_id}, payload: {cmd}")
+        # if ctype == "START":
+        #     LOGGER.info(f"[PI MANAGER] Received START command: {run_id}, payload: {cmd}")
             
-            if not run_id:
-                manager.ack(client, {"type": "READY", "status": "ERROR", "detail": "missing run_id"})
-                return
+        #     if not run_id:
+        #         manager.ack(client, {"type": "READY", "status": "ERROR", "detail": "missing run_id"})
+        #         return
             
-            manager.run_id = str(run_id)
-            manager.sample_interval_s = int(cmd.get("sample_interval_s", 5))
-            manager.current_slot = None
-            manager.last_sample_ts = None
-            manager.accumulated_joules_by_band = {
-                "blue": 0.0,
-                "green": 0.0,
-                "red": 0.0
-            }
-            try:
-                manager.run_start_ts = parse_iso_utc(cmd.get("run_start_ts"))
-                targets = cmd.get("targets_by_slot")
-                manager.decision_policy = cmd.get("decision_policy") or {"tolerance_pct": 5.0, "min_samples_before_decision": 3}
-                if not isinstance(targets, list) or len(targets) == 0:
-                    manager.ack(client, {
-                        "type": "READY",
-                        "run_id": manager.run_id,
-                        "source": SOURCE,
-                        "zone": ZONE,
-                        "status": "ERROR",
-                        "detail": "missing or invalid targets_by_slot (must be non-empty list)"
-                    })
-                    return
-                manager.targets_by_slot = targets
-                LOGGER.info(f"[SCHEDULER] RECEIVED TARGET_BY_SLOT: {len(manager.targets_by_slot)}, first_ref_ts: {manager.targets_by_slot[0].get('ref_ts')}")
-            except Exception as e:
-                manager.ack(client, {
-                    "type": "READY",
-                    "run_id": manager.run_id,
-                    "source": SOURCE,
-                    "zone": ZONE,
-                    "status": "ERROR",
-                    "detail": f"missing/invalid run_start_ts: {e}"
-                })
-                return
+        #     manager.run_id = str(run_id)
+        #     manager.sample_interval_s = int(cmd.get("sample_interval_s", 5))
+        #     manager.current_slot = None
+        #     manager.last_sample_ts = None
+        #     manager.accumulated_joules_by_band = {
+        #         "blue": 0.0,
+        #         "green": 0.0,
+        #         "red": 0.0
+        #     }
+        #     try:
+        #         manager.run_start_ts = parse_iso_utc(cmd.get("run_start_ts"))
+        #         targets = cmd.get("targets_by_slot")
+        #         manager.decision_policy = cmd.get("decision_policy") or {"tolerance_pct": 5.0, "min_samples_before_decision": 3}
+        #         if not isinstance(targets, list) or len(targets) == 0:
+        #             manager.ack(client, {
+        #                 "type": "READY",
+        #                 "run_id": manager.run_id,
+        #                 "source": SOURCE,
+        #                 "zone": ZONE,
+        #                 "status": "ERROR",
+        #                 "detail": "missing or invalid targets_by_slot (must be non-empty list)"
+        #             })
+        #             return
+        #         manager.targets_by_slot = targets
+        #         LOGGER.info(f"[SCHEDULER] RECEIVED TARGET_BY_SLOT: {len(manager.targets_by_slot)}, first_ref_ts: {manager.targets_by_slot[0].get('ref_ts')}")
+        #     except Exception as e:
+        #         manager.ack(client, {
+        #             "type": "READY",
+        #             "run_id": manager.run_id,
+        #             "source": SOURCE,
+        #             "zone": ZONE,
+        #             "status": "ERROR",
+        #             "detail": f"missing/invalid run_start_ts: {e}"
+        #         })
+        #         return
 
-            ok, detail = manager.init_sensors()
-            if not ok:
-                LOGGER.error(f"[PI MANAGER] {detail}")
-                manager.run_active = False
-                manager.ack(client, {
-                    "type": "READY",
-                    "run_id": manager.run_id,
-                    "source": SOURCE,
-                    "zone": ZONE,
-                    "status": "ERROR",
-                    "detail": detail
-                })
-                return
-            LOGGER.warning(f"[PI MANAGER] {detail}")
-            manager.seq = 0
-            manager.run_active = True
-            manager.ack(client, {
-                "type": "READY",
-                "run_id": manager.run_id,
-                "run_start_ts": manager.run_start_ts.isoformat().replace("+00:00", "Z"),
-                "source": SOURCE,
-                "zone": ZONE,
-                "status": "OK",
-                "detail": detail
-            })
-            LOGGER.info(f"[PI MANAGER] Started run_id: {manager.run_id}, sample interval: {manager.sample_interval_s}s")
-            print(f"[RUN] Started run_id: {manager.run_id}, sample interval: {manager.sample_interval_s}s")
+        #     ok, detail = manager.init_sensors()
+        #     if not ok:
+        #         LOGGER.error(f"[PI MANAGER] {detail}")
+        #         manager.run_active = False
+        #         manager.ack(client, {
+        #             "type": "READY",
+        #             "run_id": manager.run_id,
+        #             "source": SOURCE,
+        #             "zone": ZONE,
+        #             "status": "ERROR",
+        #             "detail": detail
+        #         })
+        #         return
+        #     LOGGER.warning(f"[PI MANAGER] {detail}")
+        #     manager.seq = 0
+        #     manager.run_active = True
+        #     manager.ack(client, {
+        #         "type": "READY",
+        #         "run_id": manager.run_id,
+        #         "run_start_ts": manager.run_start_ts.isoformat().replace("+00:00", "Z"),
+        #         "source": SOURCE,
+        #         "zone": ZONE,
+        #         "status": "OK",
+        #         "detail": detail
+        #     })
+        #     LOGGER.info(f"[PI MANAGER] Started run_id: {manager.run_id}, sample interval: {manager.sample_interval_s}s")
+        #     print(f"[RUN] Started run_id: {manager.run_id}, sample interval: {manager.sample_interval_s}s")
 
-        elif(ctype == "STOP"):
-            if run_id and manager.run_id and str(run_id) != manager.run_id:
-                manager.ack(client, {
-                    "type": "STOPPED",
-                    "run_id": manager.run_id,
-                    "source": SOURCE,
-                    "zone": ZONE,
-                    "status": "ERROR",
-                    "detail": f"run_id mismatch: received {run_id}, current {manager.run_id}"
-                })
-                LOGGER.error(f"run_id mismatch: received {run_id}, current {manager.run_id}")
-                return
-            manager.run_active = False
-            stopped_run = manager.run_id
-            manager.run_id = None
-            manager.targets_by_slot = None
-            manager.run_start_ts = None
-            manager.seq = 0
-            manager.current_slot = None
-            manager.last_sample_ts = None
-            manager.accumulated_joules_by_band = {
-                "blue": 0.0,
-                "green": 0.0,
-                "red": 0.0
-            }
-            manager.ack(client, {"type": "STOPPED", "run_id": stopped_run, "source": SOURCE, "zone": ZONE, "status": "OK"})
-            LOGGER.info(f"[PI MANAGER] Stopped run_id: {stopped_run}")
-            print(f"[RUN] Stopped run_id: {stopped_run}")
-        elif ctype == "EXIT":
-            if run_id and manager.run_id and str(run_id) != manager.run_id:
-                manager.ack(client, {
-                    "type": "EXITING",
-                    "run_id": manager.run_id,
-                    "source": SOURCE,
-                    "zone": ZONE,
-                    "status": "ERROR",
-                    "detail": f"run_id mismatch: received {run_id}, current {manager.run_id}",
-                })
-                LOGGER.error(f"[PI MANAGER] run_id mismatch: received {run_id}, current {manager.run_id}")
-                return
-            manager.run_active = False
-            manager.shutdown_requested = True
-            stopped_run = manager.run_id
-            manager.run_id = None
-            manager.targets_by_slot = None
-            manager.run_start_ts = None
-            manager.seq = 0
-            manager.current_slot = None
-            manager.last_sample_ts = None
-            manager.accumulated_joules_by_band = {
-                "blue": 0.0,
-                "green": 0.0,
-                "red": 0.0
-            }
-            manager.ack(client, {
-                "type": "EXITING",
-                "run_id": stopped_run,
-                "source": SOURCE,
-                "zone": ZONE,
-                "status": "OK",
-                "detail": "shutting down"
-            })
-            LOGGER.info(f"[PI MANAGER] Shutdown requested for run_id: {stopped_run}")
-            print(f"[RUN] Shutdown requested for run_id: {stopped_run}")
-        else:
-            LOGGER.error(f"[PI MANAGER] Unknown Command Type: {cmd}")
-            print(f"[CMD] unknown command type: {cmd}")
+        # elif(ctype == "STOP"):
+        #     if run_id and manager.run_id and str(run_id) != manager.run_id:
+        #         manager.ack(client, {
+        #             "type": "STOPPED",
+        #             "run_id": manager.run_id,
+        #             "source": SOURCE,
+        #             "zone": ZONE,
+        #             "status": "ERROR",
+        #             "detail": f"run_id mismatch: received {run_id}, current {manager.run_id}"
+        #         })
+        #         LOGGER.error(f"run_id mismatch: received {run_id}, current {manager.run_id}")
+        #         return
+        #     manager.run_active = False
+        #     stopped_run = manager.run_id
+        #     manager.run_id = None
+        #     manager.targets_by_slot = None
+        #     manager.run_start_ts = None
+        #     manager.seq = 0
+        #     manager.current_slot = None
+        #     manager.last_sample_ts = None
+        #     manager.accumulated_joules_by_band = {
+        #         "blue": 0.0,
+        #         "green": 0.0,
+        #         "red": 0.0
+        #     }
+        #     manager.ack(client, {"type": "STOPPED", "run_id": stopped_run, "source": SOURCE, "zone": ZONE, "status": "OK"})
+        #     LOGGER.info(f"[PI MANAGER] Stopped run_id: {stopped_run}")
+        #     print(f"[RUN] Stopped run_id: {stopped_run}")
+        # elif ctype == "EXIT":
+        #     if run_id and manager.run_id and str(run_id) != manager.run_id:
+        #         manager.ack(client, {
+        #             "type": "EXITING",
+        #             "run_id": manager.run_id,
+        #             "source": SOURCE,
+        #             "zone": ZONE,
+        #             "status": "ERROR",
+        #             "detail": f"run_id mismatch: received {run_id}, current {manager.run_id}",
+        #         })
+        #         LOGGER.error(f"[PI MANAGER] run_id mismatch: received {run_id}, current {manager.run_id}")
+        #         return
+        #     manager.run_active = False
+        #     manager.shutdown_requested = True
+        #     stopped_run = manager.run_id
+        #     manager.run_id = None
+        #     manager.targets_by_slot = None
+        #     manager.run_start_ts = None
+        #     manager.seq = 0
+        #     manager.current_slot = None
+        #     manager.last_sample_ts = None
+        #     manager.accumulated_joules_by_band = {
+        #         "blue": 0.0,
+        #         "green": 0.0,
+        #         "red": 0.0
+        #     }
+        #     manager.ack(client, {
+        #         "type": "EXITING",
+        #         "run_id": stopped_run,
+        #         "source": SOURCE,
+        #         "zone": ZONE,
+        #         "status": "OK",
+        #         "detail": "shutting down"
+        #     })
+        #     LOGGER.info(f"[PI MANAGER] Shutdown requested for run_id: {stopped_run}")
+        #     print(f"[RUN] Shutdown requested for run_id: {stopped_run}")
+        # else:
+        #     LOGGER.error(f"[PI MANAGER] Unknown Command Type: {cmd}")
+        #     print(f"[CMD] unknown command type: {cmd}")
+
+
 
     client.on_connect = on_connect
     client.on_message = on_message

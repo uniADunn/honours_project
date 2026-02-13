@@ -218,7 +218,7 @@ class PiManager:
             "red": 0.0
         }
 
-    def parse_start_cmd(self, cmd: dict) -> tuple[bool, str]:
+    def parse_start_cmd(self, cmd: dict) -> tuple[bool, str, dict]:
         run_id = cmd.get("run_id")
         if not run_id:
             return False, "missing run_id"
@@ -249,7 +249,7 @@ class PiManager:
             self.handle_start_cmd(client, cmd)
         elif ctype == "STOP":
             self.handle_stop_cmd(client, cmd)
-        elif ctype == "Exit":
+        elif ctype == "EXIT":
             self.handle_exit_cmd(client, cmd)
         else:
             LOGGER.error(f"[PI MANAGER] Unknown Command Type: {cmd}")
@@ -280,7 +280,7 @@ class PiManager:
 
         ok_sensors, sensor_detail = self.init_sensors()
         if not ok_sensors:
-            LOGGER(f"[PI MANAGER] {sensor_detail}")
+            LOGGER.info(f"[PI MANAGER] {sensor_detail}")
             self.reset_run()
             self.ack(client, {
                 "type": "READY",

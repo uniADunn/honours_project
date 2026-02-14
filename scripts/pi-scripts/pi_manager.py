@@ -182,13 +182,13 @@ def clamp_action_decision(
             reasons.append("target energy is effectively zero and dark.")
 
     #virtual output saturation clamps
-    if raw_decision == "DECREASE" and output_level_pct <= 0.0:
-        final = "HOLD"
-        reasons.append("output already at 0%, cannot decrease further.")
+    # if raw_decision == "DECREASE" and output_level_pct <= 0.0:
+    #     final = "HOLD"
+    #     reasons.append("output already at 0%, cannot decrease further.")
 
-    if raw_decision == "INCREASE" and output_level_pct >= 100.0:
-        final = "HOLD"
-        reasons.append("output already at 100%, cannot increase further.")
+    # if raw_decision == "INCREASE" and output_level_pct >= 100.0:
+    #     final = "HOLD"
+    #     reasons.append("output already at 100%, cannot increase further.")
 
     return final, reasons
 

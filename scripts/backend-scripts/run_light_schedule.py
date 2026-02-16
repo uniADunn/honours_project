@@ -115,7 +115,6 @@ def parse_window_dates_input(year:int)-> tuple[datetime, datetime]:
             )
     raise ValueError("Invalid date input aborting...")
             
-
 #slice helper
 def slice_profile(light_profile, start_ts:datetime, end_ts:datetime):
     sliced = [row for row in light_profile if start_ts <= row[0] <= end_ts]
@@ -123,8 +122,6 @@ def slice_profile(light_profile, start_ts:datetime, end_ts:datetime):
         LOGGER.warning(f"No profile rows found in slice {start_ts} -> {end_ts}")
         raise ValueError(f"No profile rows found in slice {start_ts} -> {end_ts}")
     return sliced
-
-
 
 # get the duration of the slice
 def get_duration_of_slice(start, end)-> int:
@@ -157,7 +154,6 @@ def create_run_with_metadata(conn, run_id:str, status:str, crop:str, ref_country
     finally:
         cur.close()
         
-
 # get the best country and year for entered crop
 def get_best_country_year_for_crop(conn, crop: str) -> tuple[str, int]:
     LOGGER.info(f"[DB] Getting best country and year for: '{crop}'. Please wait...")
@@ -252,7 +248,7 @@ class AckWaiter:
         except Exception:
             LOGGER.error("[MQTT] Error decoding payload or parsing JSON")
             return
-
+# publish a command to the pi and wait for an ack response on the ack topic, return the ack or None if timeout
 def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
     cmd_topic, ack_topic, _data_topic, decision_topic = get_topics(zone)
     waiter = AckWaiter()
@@ -289,19 +285,7 @@ def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
     client.disconnect()
     LOGGER.warning(f"[RUN SCHEDULER] ACK wait timed out after {timeout_s} seconds")
     return None
-
-# run operations/commands: start/stop
-# def start_run(zone:str, run_id:str, sample_interval_s: int = 5):
-#     payload = {
-#         "type": "START",
-#         "run_id": run_id,
-#         "sample_interval_s": int(sample_interval_s)
-#     }
-#     LOGGER.info(f"[RUN SCHEDULER] Sending START command to zone: {zone}, run_id: {run_id}, sample_interval_s: {sample_interval_s}")
-#     ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s=8)         
-#     #LOGGER.info(f"[RUN SCHEDULER] START command ACK received: {ack}")
-#     return ack
-
+# start a run by sending the START command to the pi with the run details and target slots, return the ack response from the pi
 def start_run(
         zone:str,
         run_id:str,
@@ -343,7 +327,7 @@ def start_run(
     LOGGER.info(f"[SCHEDULER] Sending START  command to zone: {zone}, run_id: {run_id}")
     ack = mqtt_publish_n_wait_ack(zone, payload, timeout_s = 8)
     return ack
-
+# build the target slots for the run from the sliced profile rows, each slot corresponds to 1 hour of elapsed time in the run, and includes the target blue, green, red and total light values for that hour based on the reference profile.
 def build_target_slots(sliced_rows: list[tuple])->list[dict]:
     """
     sliced rows are tuples from get_best_light_profile() method
@@ -373,7 +357,7 @@ def build_target_slots(sliced_rows: list[tuple])->list[dict]:
             }
         })
     return targets
-
+# stop a run by sending the STOP command to the pi with the run_id, return the ack response from the pi
 def stop_run(zone:str, run_id:str):
     payload = {
         "type": "STOP",
@@ -385,21 +369,22 @@ def stop_run(zone:str, run_id:str):
 
     #LOGGER.info(f"[RUN SCHEDULER] STOP command ACK received: {ack}")
     return ack
-
-# main flow
-def main():
-    # set crop selected
+# for testing purposes we can hardcode the crop, zone, and sample interval
+def get_hardcoded_crop_zone_sample_interval()->tuple[str,str,int]:
     crop = "Tomatoes".strip()
-    #crop = "ch"
-    # set zone
     zone = "zone1"
-    #set sample interval
     sample_interval_s = 5
     print()
+    LOGGER.info(f"[SCHEDULER] hardcoded values - crop: {crop}, zone: {zone}, sample_interval_s: {sample_interval_s}")
+    return crop, zone, sample_interval_s
+# main flow
+def main():
+    crop, zone, sample_interval_s = get_hardcoded_crop_zone_sample_interval()
 
-    LOGGER.info(f"[SHCEDULER] Crop hardcoded: {crop}, zone hardcoded: {zone}, sample interval hardcoded: {sample_interval_s}")
-    #get connection
+    #get connection to db
     conn = db_connect()
+
+    #-------------get reference profile details: country, year, light profile for best country-year----------------#
 
     # get the country and year that achieved highest yield for crop
     try:
@@ -426,6 +411,7 @@ def main():
     print()
     LOGGER.info(f"[SCHEDULER] Retrieved light profile: count: {count}, first_ts: {schedule_start_ts}, last_ts={schedule_end_ts}")
 
+    #-------------get schedule window from user input and slice the profile------------------#
     # #get date input from user
     try:
         start_ts, end_ts = parse_window_dates_input(ref_year)
@@ -445,12 +431,9 @@ def main():
         LOGGER.error(f"[RUN SCHEDULER] slice was unsuccessful for start: {start_ts} -> {end_ts}")
         raise ve
     
-    # for row in range(0, len(slice_rows)):
-    #     print("\n", slice_rows[row])
-
+    #-------------create a run in db with metadata and status CREATED------------------#
     # #generate a run id
     run_id = f"testing_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-
 
     # create a run row (includes meta data, e.g. crop, country year, schedule start, schedule end, etc)
     try:
@@ -459,7 +442,7 @@ def main():
     except Exception as e:
         LOGGER.error(f"Unable to create run: {e}")
 
-    
+    #-------------send start command to pi with run details and target slots------------------#
     #send start command to pi
     try:
         #build targets slots from sliced rows
@@ -482,6 +465,7 @@ def main():
             decision_policy={"tolerance_pct": 5.0, "min_samples_before_decision": 6},
                
         )
+
         if not ack or ack.get("status") != "OK":
             set_run_status(conn, run_id, "FAILED", note=f"Start Failed, ack: {ack}")
             LOGGER.error(f"[RUN SCHEDULER] Start run failed for run_id: {run_id}, ack: {ack}")
@@ -498,6 +482,7 @@ def main():
     print(f"[RUN] Running. run_id: {run_id}.\nWaiting {duration_in_seconds} seconds to accumulate sensor readings...")
     LOGGER.info(f"[RUN SCHEDULER] Run is now RUNNING for run_id: {run_id}. Waiting {duration_in_seconds} seconds to accumulate sensor readings...")
     
+    #-------------wait for the duration of the slice (plus a buffer) and then send stop command------------------#
     try:
         time.sleep(duration_in_seconds + 5)
         ack2 = stop_run(zone, run_id)

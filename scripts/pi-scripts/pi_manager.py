@@ -276,9 +276,9 @@ class PiManager:
         except Exception as e:
             return False, f"invalid run_start_ts: {e}", {}
         
-        targets = cmd.get("targets_by_slot")
-        if not isinstance(targets, list) or len(targets) == 0:
-            return False, "missing or invalid targets_by_slot (must not be an empty list)", {}
+        # targets = cmd.get("targets_by_slot")
+        # if not isinstance(targets, list) or len(targets) == 0:
+        #     return False, "missing or invalid targets_by_slot (must not be an empty list)", {}
         
         sample_interval_s = int(cmd.get("sample_interval_s", 5)) # default to 5s interval
         decision_policy = cmd.get("decision_policy") or {"tolerance_pct": 5.0, "min_samples_before_decision": 6}

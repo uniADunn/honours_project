@@ -286,7 +286,7 @@ class PiManager:
         return True, "OK", {
             "run_id": str(run_id),
             "run_start_ts": run_start_ts,
-            "targets_by_slot": targets,
+            #"targets_by_slot": targets,
             "sample_interval_s": sample_interval_s,
             "decision_policy": decision_policy
         }

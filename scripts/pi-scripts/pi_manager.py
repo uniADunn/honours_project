@@ -320,7 +320,7 @@ class PiManager:
             run_id = parsed["run_id"],
             sample_interval_s = parsed["sample_interval_s"],
             run_start_ts = parsed["run_start_ts"],
-            targets_by_slot= parsed["targets_by_slot"],
+            #targets_by_slot= parsed["targets_by_slot"],
             decision_policy = parsed["decision_policy"]
         )
 

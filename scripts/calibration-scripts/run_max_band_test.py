@@ -112,7 +112,8 @@ def f0(x) -> float:
 # CONTROL CLIENT (START/STOP + wait for ACK)
 # ============================================================
 def make_mqtt_client(client_id: str) -> mqtt.Client:
-    c = mqtt.Client(client_id=client_id)
+    c = mqtt.Client(client_id=client_id,
+                    callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     if MQTT_USER:
         c.username_pw_set(MQTT_USER, MQTT_PASSWORD)
     return c
@@ -215,6 +216,7 @@ def main():
     ctl.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
     ctl.subscribe(ack_topic, qos=1)
     ctl.loop_start()
+    dt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     # start_payload = {
     #     "type": "START",
@@ -227,7 +229,7 @@ def main():
         "type": "START",
         "run_id": run_id,
         "sample_interval_s": 5,
-        "run_start_ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "run_start_ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
 
         # #time anchors
         # "run_start_ts": run_start_ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),

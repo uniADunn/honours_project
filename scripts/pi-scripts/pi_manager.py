@@ -276,9 +276,9 @@ class PiManager:
         except Exception as e:
             return False, f"invalid run_start_ts: {e}", {}
         
-        # targets = cmd.get("targets_by_slot")
-        # if not isinstance(targets, list) or len(targets) == 0:
-        #     return False, "missing or invalid targets_by_slot (must not be an empty list)", {}
+        targets = cmd.get("targets_by_slot")
+        if not isinstance(targets, list) or len(targets) == 0:
+            return False, "missing or invalid targets_by_slot (must not be an empty list)", {}
         
         sample_interval_s = int(cmd.get("sample_interval_s", 5)) # default to 5s interval
         decision_policy = cmd.get("decision_policy") or {"tolerance_pct": 5.0, "min_samples_before_decision": 6}
@@ -286,7 +286,7 @@ class PiManager:
         return True, "OK", {
             "run_id": str(run_id),
             "run_start_ts": run_start_ts,
-            #"targets_by_slot": targets,
+            "targets_by_slot": targets,
             "sample_interval_s": sample_interval_s,
             "decision_policy": decision_policy
         }
@@ -307,6 +307,7 @@ class PiManager:
         ok, detail, parsed = self.parse_start_cmd(cmd)
         run_id = parsed.get("run_id") if parsed else cmd.get("run_id")
 
+
         LOGGER.info(f"[PI MANAGER] Received START command: {run_id}, payload: {cmd}")
 
         if not ok:
@@ -320,7 +321,7 @@ class PiManager:
             run_id = parsed["run_id"],
             sample_interval_s = parsed["sample_interval_s"],
             run_start_ts = parsed["run_start_ts"],
-            #targets_by_slot= parsed["targets_by_slot"],
+            targets_by_slot= parsed["targets_by_slot"],
             decision_policy = parsed["decision_policy"]
         )
 

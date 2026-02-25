@@ -1,405 +1,187 @@
 import os
 import sys
 import json
+import time
 import uuid
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import Event
+from datetime import datetime, timedelta, timezone
 
-from dotenv import load_dotenv
 import mysql.connector
 import paho.mqtt.client as mqtt
 
-# ------------------------------------------------------------
-# Make project root importable + load .env from project root
-# ------------------------------------------------------------
+from dotenv import load_dotenv
+#project root and load_env
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 load_dotenv(PROJECT_ROOT / ".env")
 
-from shared.spectral_conversion import bands_wm2_from_payload  # noqa
+from shared.spectral_conversion import bands_wm2_from_payload
 
-
-# ============================================================
-# HARD CODED CONFIG (EDIT THESE)
-# ============================================================
+#CALIBRATION SETTINGS HARD-CODED
 ZONE = "zone1"
-LED_COLOUR = "BLUE ONLY"   # "BLUE ONLY" | "GREEN ONLY" | "RED ONLY"
-NOTES = "desk LED strip, max brightness, ~3-5 inches from sensor"
-DEFAULT_SAMPLE_INTERVAL_S = 1.0
+LED_COLOUR = "BLUE ONLY"
+NOTES = " desk LED strip, max brightness, 3-5cm distance from sensor,"
+SAMPLE_INTERVAL_S = 5
 
-
-# ============================================================
-# MQTT CONFIG (.env)
-# ============================================================
+# ENV CONFIG
+# mqtt configuration
 MQTT_HOST = os.getenv("MQTT_HOST")
-MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
 MQTT_TOPIC = os.getenv("MQTT_TOPIC")
 
 MQTT_USER = os.getenv("MQTT_USER")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
 
+# mysql configuration
+MYSQL_HOST = os.getenv("MYSQL_HOST")
+MYSQL_PORT = int(os.getenv("MYSQL_PORT", 3306))
+MYSQL_DB = os.getenv("MYSQL_DB")
 
-# ============================================================
-# MYSQL CONFIG (.env)
-# ============================================================
-MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
-MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
-MYSQL_DB = os.getenv("MYSQL_DB", "crop_lighting")
-MYSQL_USER = os.getenv("MYSQL_USER", "root")
+MYSQL_USER = os.getenv("MYSQL_USER")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
 
-
-# ============================================================
-# TOPICS
-# ============================================================
-def get_topics(zone: str) -> tuple[str, str]:
+# TOPIC HELPER
+def get_mqtt_topics(zone: str) -> tuple[str, str]:
     cmd_topic = f"adunn/control/{zone}/cmd"
     ack_topic = f"adunn/control/{zone}/ack"
     return cmd_topic, ack_topic
 
+# TIME HELPERS
+def iso_utc_z_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-# ============================================================
-# SQL (matches your table exactly)
-# ============================================================
-INSERT_SQL = """
-INSERT INTO band_max_calibration_runs(
-    cal_run_id, cal_run_seq, ts_utc,
-    led_colour, zone, source,
-    slot_start_utc, slot_end_utc,
-    sample_interval_s, notes,
-
-    blue_measured_W_m2, blue_accumulated_J_m2, blue_predicted_J_m2,
-    green_measured_W_m2, green_accumulated_J_m2, green_predicted_J_m2,
-    red_measured_W_m2, red_accumulated_J_m2, red_predicted_J_m2
-) VALUES (
-    %s, %s, %s,
-    %s, %s, %s,
-    %s, %s,
-    %s, %s,
-
-    %s, %s, %s,
-    %s, %s, %s,
-    %s, %s, %s
-)
-"""
-
-
-def parse_ts_mysql_utc(ts_str: str):
-    # matches your ingestion convention: store naive UTC DATETIME
+def parse_ts_mysql_utc(ts_str: str) -> datetime:
     try:
         ts_str = (ts_str or "").strip()
         if not ts_str:
             return None
-        if ts_str.endswith("Z"):
+        if ts_str.endswit("Z"):
             ts_str = ts_str.replace("Z", "+00:00")
-
-        ts_dt = datetime.fromisoformat(ts_str)   # aware if offset present
-        return ts_dt.replace(tzinfo=None)        # naive UTC
+        
+        dt = datetime.fromisoformat(ts_str)
+        return dt.replace(tzinfo=None)
     except Exception:
         return None
 
-
-def f0(x) -> float:
-    # table columns are NOT NULL, so force numbers
+# force none -> 0.0 
+def safe_float(val) -> float:
     try:
-        return 0.0 if x is None else float(x)
+        return 0.0 if val is None else float(val)
     except Exception:
         return 0.0
 
+def config_check():
+    if LED_COLOUR not in {"BLUE ONLY", "GREEN ONLY", "RED ONLY"}:
+        raise ValueError(f"LED COLOUR must be one of 'BLUE ONLY', 'GREEN ONLY', 'RED ONLY'. Got: {LED_COLOUR}")
+    
+    if not MQTT_HOST or not MQTT_TOPIC:
+        raise RuntimeError("MQTT_HOST AND MQTT_TOPIC must be set in .env file")
+        
+    if not MQTT_USER or not MQTT_PASSWORD:
+        raise RuntimeError("MQTT_USER and MQTT_PASSWORD must be set in .env file")
+    
+    if not MYSQL_DB:
+        raise RuntimeError("MYSQL_DB must be set in .env file")
+    
+def build_dummy_targets_by_slot() -> list[dict]:
+    now_z = iso_utc_z_now()
+    return[{
+        "slot": 0,
+        "ref_ts": now_z,
+        "target" : {
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+        }
+    }]
+    
+class AckWaiter:
+    def __init__(self):
+        self.last_ack = None
 
-# ============================================================
-# CONTROL CLIENT (START/STOP + wait for ACK)
-# ============================================================
-def make_mqtt_client(client_id: str) -> mqtt.Client:
-    c = mqtt.Client(client_id=client_id,
-                    callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-    if MQTT_USER:
-        c.username_pw_set(MQTT_USER, MQTT_PASSWORD)
-    return c
-
-
-def publish_and_wait_ack(
-    client: mqtt.Client,
-    cmd_topic: str,
-    ack_topic: str,
-    payload: dict,
-    expect_type: str,
-    timeout_s: int = 10,
-) -> dict:
-    """
-    Very simple ACK wait:
-    - Subscribed to ack_topic already
-    - Publish command
-    - Block until an ACK arrives that matches expect_type (+ run_id + zone)
-    Returns the ack dict or raises RuntimeError.
-    """
-    ack_event = Event()
-    ack_box = {"ack": None}
-
-    run_id = str(payload.get("run_id") or "").strip()
-    zone = str(payload.get("zone") or "").strip().lower()
-
-    def on_ack(_client, _userdata, msg):
+    def on_message(self, client, userdata, msg):
         try:
-            d = json.loads(msg.payload.decode("utf-8", errors="replace"))
+            payload = msg.payload.decode("utf-8", errors="replace")
+            data = json.loads(payload)
+            self.last_ack = data
         except Exception:
             return
+        
+    def matches(self, type:str, run_id: str, zone: str) -> bool:
+        if not self.last_ack:
+            return False
+        
+    
 
-        # Common patterns:
-        # - ack might be {"type":"ACK","cmd":"START",...}
-        # - or {"type":"START_ACK",...}
-        # We'll accept a few variants, but keep it strict on run_id + zone.
-        d_type = (d.get("type") or "").upper()
-        d_cmd = (d.get("cmd") or "").upper()
+        if str((type) or "".upper()) != str(type or "").upper():
+            return False
+        if str((run_id) or "".upper()) != str(run_id or "").upper():
+            return False
+        if str((zone) or "").strip().lower() != str(zone or "").strip().lower():
+            return False
+        return True
+    
+def publish_cmd_and_wait_for_ack(zone:str, payload:dict, type:str, timeout_s: int = 10):
 
-        if str(d.get("run_id") or "").strip() != run_id:
-            return
-        if str(d.get("zone") or "").strip().lower() != zone:
-            return
+    cmd_topic, ack_topic = get_mqtt_topics(zone)
+    waiter = AckWaiter()
 
-        # Decide if it matches expected
-        if d_type == "ACK" and d_cmd == expect_type:
-            ack_box["ack"] = d
-            ack_event.set()
-            return
+    client_id = f"calibration_script_{uuid.uuid4()}"
+    client = mqtt.Client(client_id=client_id, callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+    client.on_message = waiter.on_message
 
-        if d_type in {f"{expect_type}_ACK", f"ACK_{expect_type}"}:
-            ack_box["ack"] = d
-            ack_event.set()
-            return
+    client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+    client.subscribe(ack_topic, qos=1)
+    client.loop_start()
 
-    # temporarily hook ack handler
-    prev_on_message = client.on_message
-    def router(_client, _userdata, msg):
-        if msg.topic == ack_topic:
-            on_ack(_client, _userdata, msg)
-        if prev_on_message:
-            prev_on_message(_client, _userdata, msg)
-
-    client.on_message = router
-
-    # publish
-    print(f"[MQTT] Publishing {expect_type} -> {cmd_topic}")
+    print(f"[MQTT] Publishing cmd: {payload.get('type')} to {cmd_topic}")
     client.publish(cmd_topic, json.dumps(payload), qos=1)
 
-    ok = ack_event.wait(timeout_s)
-    if not ok:
-        raise RuntimeError(f"No ACK received for {expect_type} within {timeout_s}s (topic={ack_topic})")
+    run_id = payload.get("run_id")
+    deadline = time.time() + timeout_s
+    ack = None
 
-    return ack_box["ack"]
+    while time.time() < deadline:
+        if waiter.matches(type=type, run_id=run_id, zone=zone):
+            ack = waiter.last_ack
+            break
+        time.sleep(0.5)
 
+    client.loop_stop()
+    client.disconnect()
 
-# ============================================================
-# MAIN
-# ============================================================
-def main():
-    if LED_COLOUR not in {"BLUE ONLY", "GREEN ONLY", "RED ONLY"}:
-        raise ValueError(f'LED_COLOUR must be "BLUE ONLY"/"GREEN ONLY"/"RED ONLY". Got {LED_COLOUR!r}')
+    return ack
 
-    if not MQTT_HOST or not MQTT_TOPIC:
-        raise RuntimeError("MQTT_HOST and MQTT_TOPIC must be set in .env")
-
-    cmd_topic, ack_topic = get_topics(ZONE)
-
-    # one run_id used for START/STOP handshake (pi side often expects this)
-    run_id = f"max_band_cal_{uuid.uuid4().hex[:10]}"
-    cal_run_id = uuid.uuid4().hex  # your DB calibration run id (independent)
-    print(f"[CAL] cal_run_id={cal_run_id}")
-    print(f"[CAL] run_id(for START/STOP)={run_id}")
-    print(f"[CAL] led_colour={LED_COLOUR}")
-
-    # -----------------------------
-    # CONTROL CLIENT: START sensors and wait for ACK
-    # -----------------------------
-    ctl = make_mqtt_client(client_id=f"cal_ctl_{uuid.uuid4().hex[:8]}")
-    ctl.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
-    ctl.subscribe(ack_topic, qos=1)
-    ctl.loop_start()
-    dt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-    # start_payload = {
-    #     "type": "START",
-    #     "run_id": run_id,
-    #     "ts": datetime.utcnow().isoformat() + "Z",
-    #     "source": "calibration_script",
-    #     "zone": ZONE,
-    # }
-    start_payload = {
+def send_start(zone:str, run_id:str, sample_interval_s: int = 5):
+    payload =  {
         "type": "START",
         "run_id": run_id,
-        "sample_interval_s": 5,
-        "run_start_ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-
-        # #time anchors
-        # "run_start_ts": run_start_ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-        # "ref_start_ts": ref_start_ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-
-        # #metadata
-        # "ref_meta": ref_meta, # e.g. {"crop": "tomatoes", "country": "Belgium", "year": 2020}
-
-        # #comparison details
-        # "compare_mode": compare_mode, # cumulative
-        # "decision_policy": decision_policy,
-
-        # #target sequence for the run
-        # #each element corresponds to slot index = floor(elapsed_s/3600)
-        # "targets_by_slot": targets_by_slot
-    }
-
-
-    ack = publish_and_wait_ack(
-        ctl, cmd_topic, ack_topic, start_payload, expect_type="START", timeout_s=10
-    )
-    print(f"[MQTT] START ACK: {ack}")
-
-    # -----------------------------
-    # DB connect
-    # -----------------------------
-    conn = mysql.connector.connect(
-        host=MYSQL_HOST,
-        port=MYSQL_PORT,
-        user=MYSQL_USER,
-        password=MYSQL_PASSWORD,
-        database=MYSQL_DB,
-        autocommit=True,
-    )
-    cur = conn.cursor()
-
-    # -----------------------------
-    # DATA CLIENT: subscribe and capture 1-hour window
-    # -----------------------------
-    cal_run_seq = 0
-    blue_j = green_j = red_j = 0.0
-    last_ts = None
-    slot_start = None
-    slot_end = None
-
-    def on_data_connect(client, userdata, flags, rc, properties=None):
-        if rc != 0:
-            print(f"[MQTT] data connect failed rc={rc}")
-            sys.exit(1)
-        print(f"[MQTT] Data connected. Subscribing: {MQTT_TOPIC}")
-        client.subscribe(MQTT_TOPIC, qos=0)
-        print("[CAL] Waiting for first sensor sample to set the hour window...")
-
-    def on_data_message(client, userdata, msg):
-        nonlocal cal_run_seq, blue_j, green_j, red_j, last_ts, slot_start, slot_end
-
-        raw = msg.payload.decode("utf-8", errors="replace")
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return
-
-        # ignore decisions; calibration is sensor-only
-        if data.get("type") == "DECISION":
-            return
-
-        ts_in = data.get("ts")
-        source = data.get("source")
-        zone = data.get("zone")
-        if isinstance(zone, str):
-            zone = zone.strip().lower()
-
-        if not ts_in or source is None or not zone:
-            return
-
-        ts_mysql = parse_ts_mysql_utc(ts_in)
-        if ts_mysql is None:
-            return
-
-        # init hour window from first valid sample
-        if slot_start is None:
-            slot_start = ts_mysql.replace(minute=0, second=0, microsecond=0)
-            slot_end = slot_start + timedelta(hours=1)
-            print(f"[CAL] Window: {slot_start} -> {slot_end}")
-            print("[CAL] Leave the LED on for the full hour window.")
-
-        # stop at hour boundary
-        if ts_mysql >= slot_end:
-            print("[CAL] Hour complete. Disconnecting data client...")
-            client.disconnect()
-            return
-
-        bands = bands_wm2_from_payload(data)
-        blue_w = bands.get("blue_W_m2")
-        green_w = bands.get("green_W_m2")
-        red_w = bands.get("red_W_m2")
-
-        # dt seconds
-        if last_ts is None:
-            dt_s = DEFAULT_SAMPLE_INTERVAL_S
-        else:
-            dt = (ts_mysql - last_ts).total_seconds()
-            dt_s = dt if 0.0 < dt < 60.0 else DEFAULT_SAMPLE_INTERVAL_S
-
-        blue_j += f0(blue_w) * dt_s
-        green_j += f0(green_w) * dt_s
-        red_j += f0(red_w) * dt_s
-
-        remaining_s = (slot_end - ts_mysql).total_seconds()
-        blue_pred = blue_j + (f0(blue_w) * remaining_s)
-        green_pred = green_j + (f0(green_w) * remaining_s)
-        red_pred = red_j + (f0(red_w) * remaining_s)
-
-        cur.execute(
-            INSERT_SQL,
-            (
-                cal_run_id, cal_run_seq, ts_mysql,
-                LED_COLOUR, str(zone), str(source),
-                slot_start, slot_end,
-                float(dt_s), NOTES,
-
-                f0(blue_w), float(blue_j), float(blue_pred),
-                f0(green_w), float(green_j), float(green_pred),
-                f0(red_w), float(red_j), float(red_pred),
-            ),
-        )
-
-        if cal_run_seq % 30 == 0:
-            print(f"[CAL] seq={cal_run_seq} blue_J={blue_j:.2f} green_J={green_j:.2f} red_J={red_j:.2f}")
-
-        cal_run_seq += 1
-        last_ts = ts_mysql
-
-    data_client = make_mqtt_client(client_id=f"cal_data_{uuid.uuid4().hex[:8]}")
-    data_client.on_connect = on_data_connect
-    data_client.on_message = on_data_message
-    data_client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
-    data_client.loop_forever()
-
-    # -----------------------------
-    # FINAL OUTPUT
-    # -----------------------------
-    print("\n============ FINAL TOTALS (J/m² per hour) ============")
-    print(f"cal_run_id : {cal_run_id}")
-    print(f"led_colour : {LED_COLOUR}")
-    print(f"BLUE  J/m² : {blue_j:.2f}")
-    print(f"GREEN J/m² : {green_j:.2f}")
-    print(f"RED   J/m² : {red_j:.2f}")
-
-    cur.close()
-    conn.close()
-
-    # -----------------------------
-    # CONTROL CLIENT: STOP sensors and wait for ACK
-    # -----------------------------
-    stop_payload = {
-        "type": "STOP",
-        "run_id": run_id,
-        "ts": datetime.utcnow().isoformat() + "Z",
+        "run_start_ts": iso_utc_z_now(),
+        "sample_interval_s": sample_interval_s,
+        "targets_by_slot": build_dummy_targets_by_slot(),
         "source": "calibration_script",
-        "zone": ZONE,
+        "zone": zone
     }
-    ack2 = publish_and_wait_ack(
-        ctl, cmd_topic, ack_topic, stop_payload, expect_type="STOP", timeout_s=10
-    )
-    print(f"[MQTT] STOP ACK: {ack2}")
+    return publish_cmd_and_wait_for_ack(zone, payload, type="START", timeout_s=10)
 
-    ctl.loop_stop()
-    ctl.disconnect()
-
-
+def require_ok_ready(ack:dict):
+    if not ack:
+        raise RuntimeError("No ACK received within timeout period")
+    if str(ack.get("status") or "").upper() != "OK":
+        detail = ack.get("detail")
+        raise RuntimeError(f"[ACK ERROR] Expected ACK with status 'OK'. Got: {ack}. Detail: {detail}")
+    
+# Print out the loaded environment variables to verify they are being read correctly (TESTING PURPOSES) (DELETE THIS LATER)
 if __name__ == "__main__":
-    main()
+    config_check()
+    
+    run_id = f"max_band_test_{uuid.uuid4().hex[:8]}"
+    print(f"run_id: {run_id}")
+
+    ack = send_start(ZONE, run_id, SAMPLE_INTERVAL_S)
+    print(f"[READY ACK] RECEIVED ACK: {ack}")
+
+    require_ok_ready(ack)
+    print("[START] OK")
+    

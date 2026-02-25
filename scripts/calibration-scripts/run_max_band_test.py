@@ -40,6 +40,28 @@ MYSQL_DB = os.getenv("MYSQL_DB")
 MYSQL_USER = os.getenv("MYSQL_USER")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
 
+# MYSQL INSERT
+INSERT_SQL = """
+INSERT INTO band_max_calibration_runs(
+    cal_run_id, cal_run_seq, ts_utc,
+    led_colour, zone, source,
+    slot_start_utc, slot_end_utc,
+    sample_interval_s, notes,
+    
+    blue_measured_W_m2, blue_accumulated_J_m2, blue_predicted_J_m2,
+    green_measured_W_m2, green_accumulated_J_m2, green_predicted_J_m2,
+    red_measured_W_m2, red_accumulated_J_m2, red_predicted_J_m2
+) VALUES (
+    %s, %s, %s,
+    %s, %s, %s,
+    %s, %s,
+    %s, %s,
+    %s, %s, %s,
+    %s, %s, %s,
+    %s, %s, %s
+)
+"""
+
 # TOPIC HELPER
 def get_mqtt_topics(zone: str) -> tuple[str, str]:
     cmd_topic = f"adunn/control/{zone}/cmd"
@@ -121,7 +143,7 @@ class AckWaiter:
             return False
         return True
     
-def publish_cmd_and_wait_for_ack(zone:str, payload:dict, type:str, timeout_s: int = 10):
+def publish_cmd_and_wait_for_ack(zone:str, payload:dict, timeout_s: int = 10):
 
     cmd_topic, ack_topic = get_mqtt_topics(zone)
     waiter = AckWaiter()
@@ -134,6 +156,8 @@ def publish_cmd_and_wait_for_ack(zone:str, payload:dict, type:str, timeout_s: in
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
     client.subscribe(ack_topic, qos=1)
     client.loop_start()
+    time.sleep(0.2)
+
 
     print(f"[MQTT] Publishing cmd: {payload.get('type')} to {cmd_topic}")
     client.publish(cmd_topic, json.dumps(payload), qos=1)
@@ -143,27 +167,38 @@ def publish_cmd_and_wait_for_ack(zone:str, payload:dict, type:str, timeout_s: in
     ack = None
 
     while time.time() < deadline:
-        if waiter.matches(type=type, run_id=run_id, zone=zone):
+        if waiter.last_ack is not None:
             ack = waiter.last_ack
-            break
-        time.sleep(0.5)
+            client.loop_stop()
+            client.disconnect()
+            return ack
+        time.sleep(0.05)
 
     client.loop_stop()
     client.disconnect()
 
-    return ack
+    return None
 
-def send_start(zone:str, run_id:str, sample_interval_s: int = 5):
+def send_start(zone:str, run_id:str):
     payload =  {
         "type": "START",
         "run_id": run_id,
         "run_start_ts": iso_utc_z_now(),
-        "sample_interval_s": sample_interval_s,
+        "sample_interval_s": 5,
         "targets_by_slot": build_dummy_targets_by_slot(),
         "source": "calibration_script",
         "zone": zone
     }
-    return publish_cmd_and_wait_for_ack(zone, payload, type="START", timeout_s=10)
+    return publish_cmd_and_wait_for_ack(zone, payload, timeout_s=10)
+
+def send_stop(zone:str, run_id:str, timeout_s: int = 10):
+    payload = {
+        "type": "STOP",
+        "run_id": run_id,
+        "source": "calibration_script",
+        "zone": zone
+    }
+    return publish_cmd_and_wait_for_ack(zone, payload, timeout_s)
 
 def require_ok_ready(ack:dict):
     if not ack:
@@ -172,6 +207,125 @@ def require_ok_ready(ack:dict):
         detail = ack.get("detail")
         raise RuntimeError(f"[ACK ERROR] Expected ACK with status 'OK'. Got: {ack}. Detail: {detail}")
     
+def run_hour_calibration(run_id: str):
+    conn = mysql.connector.connect(
+        host=MYSQL_HOST,
+        port=MYSQL_PORT,
+        user=MYSQL_USER,
+        password=MYSQL_PASSWORD,
+        database=MYSQL_DB,
+        autocommit=True
+    )
+    cur = conn.cursor()
+
+    #cal_run_id = f"cal_test_run_{uuid.uuid4().hex[:8]}"
+    cal_run_seq = 0
+
+    blue_j, green_j, red_j = 0.0, 0.0, 0.0
+    last_ts = None
+    slot_start = None
+    slot_end = None
+
+    def on_connect(client, userdata, flags, rc, properties=None):
+        if rc != 0:
+            raise RuntimeError(f"failed to connect to MQTT broker. RC: {rc}")
+        client.subscribe(MQTT_TOPIC, qos=1)
+        print("[CAL] subscribed to sensor data topic")
+
+    def on_message(client, userdata, msg):
+        nonlocal cal_run_seq, blue_j, green_j, red_j, last_ts, slot_start, slot_end
+
+        raw = msg.payload.decode("utf-8", errors="replace")
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return
+        
+        if data.get("type") == "DECISION":
+            print(f"[DECISION] ignoring received decision: {data}")
+            return
+        
+        ts_in = data.get("ts")
+        source = data.get("source")
+        zone = data.get("zone")
+        if not ts_in or source is None or zone is None:
+            return
+        
+        ts_mysql = parse_ts_mysql_utc(ts_in)
+        if ts_mysql is None:
+            return
+        
+        if slot_start is None:
+            slot_start = ts_mysql.replace(minute=0, second=0, microsecond=0)
+            slot_end = slot_start + timedelta(hours=1)
+            print(f"[cal] window: {slot_start} -> {slot_end}")
+
+        if ts_mysql >= slot_end:
+            print(f"[cal] hour complete")
+            client.disconnect()
+            return
+        
+        bands = bands_wm2_from_payload(data)
+        blue_w = safe_float(bands.get("blue_W_m2"))
+        green_w = safe_float(bands.get("green_W_m2"))
+        red_w = safe_float(bands.get("red_W_m2"))
+
+        if last_ts is None:
+            dt_s = SAMPLE_INTERVAL_S
+        else:
+            dt = (ts_mysql - last_ts).total_seconds()
+            dt_s = dt if 0 < dt < 60 else SAMPLE_INTERVAL_S
+
+        blue_j += blue_w * dt_s
+        green_j += green_w * dt_s
+        red_j += red_w * dt_s
+
+        remaining_s = (slot_end-ts_mysql).total_seconds()
+
+        blue_pred_j = blue_j + (blue_w * remaining_s)
+        green_pred_j = green_j + (green_w * remaining_s)
+        red_pred_j = red_j + (red_w * remaining_s)
+
+        cur.execute(
+            INSERT_SQL,
+            (
+                run_id, cal_run_seq, ts_mysql,
+                LED_COLOUR, zone, source,
+                slot_start, slot_end,
+                dt_s, NOTES,
+
+                blue_w, blue_j, blue_pred_j,
+                green_w, green_j, green_pred_j,
+                red_w, red_j, red_pred_j
+            )
+        )
+
+        if cal_run_seq % 30 == 0:
+            print(f"[cal] inserted seq {cal_run_seq} at ts {ts_mysql} (predicted J: blue: {blue_pred_j:.2f}")
+        cal_run_seq += 1
+        last_ts = ts_mysql
+    
+    client = mqtt.Client(
+        client_id =  f"calibration_{uuid.uuid4().hex[:8]}",
+        callback_api_version=mqtt.CallbackAPIVersion.VERSION2
+    )
+    client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+    client.on_connect = on_connect
+    client.on_message = on_message
+    
+    client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+    client.loop_forever()
+
+    print("\nFINAL TOTALS:")
+    print(f"blue J: {blue_j:.4f}")
+    print(f"green J: {green_j:.4f}")
+    print(f"red J: {red_j:.4f}")
+
+    cur.close()
+    conn.close()
+
+
+
 # Print out the loaded environment variables to verify they are being read correctly (TESTING PURPOSES) (DELETE THIS LATER)
 if __name__ == "__main__":
     config_check()
@@ -179,9 +333,14 @@ if __name__ == "__main__":
     run_id = f"max_band_test_{uuid.uuid4().hex[:8]}"
     print(f"run_id: {run_id}")
 
-    ack = send_start(ZONE, run_id, SAMPLE_INTERVAL_S)
+    ack = send_start(ZONE, run_id)
     print(f"[READY ACK] RECEIVED ACK: {ack}")
 
-    require_ok_ready(ack)
-    print("[START] OK")
+    run_hour_calibration(run_id)
+
+    ack2 = send_stop(ZONE, run_id)
+    print(f"[STOP ACK] RECEIVED ACK: {ack2}")
+    
+
+    
     

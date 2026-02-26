@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 from datetime import datetime, timezone, timedelta
@@ -11,6 +12,12 @@ import uuid
 from pathlib import Path
 import logging
 from logging.handlers import RotatingFileHandler
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+load_dotenv(PROJECT_ROOT / ".env")
+
+from shared.simulate_control_tracking import simulate_target_by_slot
 
 # load .env variables
 load_dotenv()
@@ -65,6 +72,13 @@ MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_DB = os.getenv("MYSQL_DB", "crop_lighting")
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
+
+RUN_MODE = "SIMULATION" # SIMULATION or REAL
+CAPS_J_PER_HOUR = {
+    "blue": 728357.7226,
+    "green": 422294.8749,
+    "red": 129824.7369,
+}
 
 if not MYSQL_PASSWORD:
     LOGGER.error("MYSQL_PASSWORD is not set in backend .env")
@@ -377,8 +391,71 @@ def get_hardcoded_crop_zone_sample_interval()->tuple[str,str,int]:
     print()
     LOGGER.info(f"[SCHEDULER] hardcoded values - crop: {crop}, zone: {zone}, sample_interval_s: {sample_interval_s}")
     return crop, zone, sample_interval_s
-# main flow
-def main():
+
+def insert_actuator_tracking_sim(conn, run_id:str, targets_by_slot: list, sim_rows: list, batch_size: int = 5000):
+    sql_insert = """
+    INSERT INTO actuator_tracking_sim(
+    run_id, model, slot, t_offset_s,
+    target_blue_j, target_green_j, target_red_j,
+    duty_single, duty_blue, duty_green, duty_red,
+    accum_blue_j, accum_green_j, accum_red_j
+    )
+    VALUES(
+    %(run_id)s, %(model)s, %(slot)s, %(t_offset_s)s,
+    %(target_blue_j)s, %(target_green_j)s, %(target_red_j)s,
+    %(duty_single)s, %(duty_blue)s, %(duty_green)s, %(duty_red)s,
+    %(accum_blue_j)s, %(accum_green_j)s, %(accum_red_j)s
+    )
+    ON DUPLICATE KEY UPDATE
+    duty_single= VALUES(duty_single),
+    duty_blue= VALUES(duty_blue),
+    duty_green= VALUES(duty_green),
+    duty_red= VALUES(duty_red),
+    accum_blue_j= VALUES(accum_blue_j),
+    accum_green_j= VALUES(accum_green_j),
+    accum_red_j= VALUES(accum_red_j)
+"""
+    slot_targets = {
+        s["slot"]: s["target"]
+        for s in targets_by_slot
+    }
+    db_rows = []
+
+    for r in sim_rows:
+        slot = r["slot"]
+        target = slot_targets[slot]
+
+        db_rows.append({
+            "run_id": run_id,
+            "model": r["model"],
+            "slot": slot,
+            "t_offset_s": r["t_offset_s"],
+
+            "target_blue_j": target["blue"] * 1000000, # convert MJ to J
+            "target_green_j": target["green"] * 1000000,
+            "target_red_j": target["red"] * 1000000,
+
+            "duty_single": r["duty_single"],
+            "duty_blue": r["duty_blue"],
+            "duty_green": r["duty_green"],
+            "duty_red": r["duty_red"],
+
+            "accum_blue_j": r["accum_blue"],
+            "accum_green_j": r["accum_green"],
+            "accum_red_j": r["accum_red"],
+        })
+
+    cur = conn.cursor()
+    try:
+        for i in range(0, len(db_rows), batch_size):
+            cur.executemany(sql_insert, db_rows[i:i+batch_size])
+        conn.commit()
+    finally:
+        cur.close()
+
+    return len(db_rows)
+
+def real_run():
     crop, zone, sample_interval_s = get_hardcoded_crop_zone_sample_interval()
 
     #get connection to db
@@ -507,6 +584,109 @@ def main():
         LOGGER.info(f"[RUN SCHEDULER] Run Failed due to an exception for run_id: {run_id}, status: FAILED")
     finally:
         conn.close()
+
+def simulated_run():
+    crop, zone, sample_interval_s = get_hardcoded_crop_zone_sample_interval()
+
+    #get connection to db
+    conn = db_connect()
+
+    #-------------get reference profile details: country, year, light profile for best country-year----------------#
+
+    # get the country and year that achieved highest yield for crop
+    try:
+        #return the reference country and year for giving crop
+        ref_country, ref_year = get_best_country_year_for_crop(conn, crop)
+        LOGGER.info(f"[REF] crop: '{crop}': best country: {ref_country}, year achievied: {ref_year}")
+    except Exception as e:
+        LOGGER.error(f"[REF] Unable to retrieve country and year for '{crop}'")
+        raise
+
+    # retrieve the full year light profile for country, year and crop
+    try:
+        light_profile = get_best_light_profile(conn, crop, ref_country, ref_year)
+
+        schedule_start_ts = light_profile[0][0]
+        schedule_end_ts = light_profile[-1][0]
+        
+        count = len(light_profile)
+        #LOGGER.info(f"[RUN SCHEDULER] Retrieved light profile successfully. count: {count}, first_ts: {schedule_start_ts}, last_ts={schedule_end_ts}")
+    except Exception as e:
+        #LOGGER.error(f"[RUN SCHEDULER] Unable to retrieve light profile: Ending Run...")
+        raise Exception("[RUN SCHEDULER] Unable to retrieve light profile")
+    
+    print()
+    LOGGER.info(f"[SCHEDULER] Retrieved light profile: count: {count}, first_ts: {schedule_start_ts}, last_ts={schedule_end_ts}")
+
+    #-------------get schedule window from user input and slice the profile------------------#
+    # #get date input from user
+    try:
+        start_ts, end_ts = parse_window_dates_input(ref_year)
+    except Exception as e:
+        raise
+    
+    print()
+    LOGGER.info(f"[SCHEDULER] got start and end dates from user: start: {start_ts}, end: {end_ts}")
+
+    try:
+        slice_rows = slice_profile(light_profile, start_ts, end_ts)
+        LOGGER.info(f"[RUN SCHEDULER] slice successful start: {start_ts} -> {end_ts}. rows: {len(slice_rows)}")
+        duration_in_seconds = get_duration_of_slice(start_ts, end_ts)
+        LOGGER.info(f"the duration of time slice in seconds: {duration_in_seconds}s")
+        LOGGER.info(f"the duration of time slice with 5 seconds added on: seconds: {duration_in_seconds + 5}s")
+    except ValueError as ve:
+        LOGGER.error(f"[RUN SCHEDULER] slice was unsuccessful for start: {start_ts} -> {end_ts}")
+        raise ve
+    
+    run_id = f"sim_{uuid.uuid4().hex[:8]}"
+    
+    try:
+        create_run_with_metadata(conn, run_id, "CREATED", crop, ref_country, ref_year, start_ts, end_ts, sample_interval_s, zone, note=f"created by run scheduler")
+        LOGGER.info(f"Run created successfully. run_id: {run_id}, crop: {crop}, country: {ref_country}, year: {ref_year}, total rows: {len(slice_rows)}")
+    except Exception as e:
+        LOGGER.error(f"Unable to create run: {e}")
+    
+    try:
+        
+        #build targets slots from sliced rows
+        targets_slots = build_target_slots(slice_rows)
+        if not targets_slots:
+            raise RuntimeError("targets_slots is empty")
+        
+        if "slot" not in targets_slots[0]:
+            raise KeyError(f"targets_slots[0] is missing 'slot'. key={list(targets_slots[0].keys())}")
+        
+        missing = [i for i, s in enumerate(targets_slots) if "slot" not in s]
+        if missing:
+            i = missing[0]
+            raise KeyError(f"targets_slots[{i}] missing 'slot'. keys={list(targets_slots[i].keys())}")
+        sim_rows = simulate_target_by_slot(targets_slots, CAPS_J_PER_HOUR)
+
+        inserted = insert_actuator_tracking_sim(conn, run_id, targets_slots, sim_rows)
+        print(f"[DB] inserted sim rows: {inserted}")
+
+        LOGGER.info(f"[SIMULATION] simulated run started successfully")
+        print("sim rows:", len(sim_rows))
+
+        set_run_status(conn, run_id, "COMPLETED", note=f"simulated run completed successfully with {len(sim_rows)} simulated sensor readings")
+        LOGGER.info(f"[SIMULATION] simulated run completed successfully with {len(sim_rows)} simulated sensor readings")
+
+    except Exception as e:
+        LOGGER.error(f"[RUN SCHEDULER] Failed to build target slots from sliced rows: {e}")
+        raise e
+    
+
+# main flow
+def main():
+    if RUN_MODE == "REAL":
+        real_run()
+    elif RUN_MODE == "SIMULATION":
+        LOGGER.info("Running in SIMULATION mode. simulated_run()")
+        simulated_run()
+    else:
+        LOGGER.error(f"Invalid RUN_MODE: {RUN_MODE}. Must be 'REAL' or 'SIMULATION'.")
+        raise ValueError(f"Invalid RUN_MODE: {RUN_MODE}. Must be 'REAL' or 'SIMULATION'.")
+    
         
 
 if __name__ == "__main__":
@@ -515,7 +695,12 @@ if __name__ == "__main__":
         LOGGER.info("Schedule Completed. Ending run...")
         SystemExit(0)
     except Exception as e:
-        LOGGER.error(f" FATAL: {e}")
-        stop_run(zone="zone1", run_id = "unknown_run_id_due_to_exception")
-        set_run_status(db_connect(), run_id="unknown_run_id_due_to_exception", status="FAILED", note=f"FATAL error in run scheduler: {e}")
-        SystemExit(0)
+        if RUN_MODE == "SIMULATION":
+            LOGGER.error(f" FATAL error in run scheduler: {e}")
+            set_run_status(db_connect(), run_id="unknown_run_id_due_to_exception", status="FAILED", note=f"FATAL error in run scheduler: {e}")
+            SystemExit(0)
+        else:
+            LOGGER.error(f" FATAL: {e}")
+            stop_run(zone="zone1", run_id = "unknown_run_id_due_to_exception")
+            set_run_status(db_connect(), run_id="unknown_run_id_due_to_exception", status="FAILED", note=f"FATAL error in run scheduler: {e}")
+            SystemExit(0)

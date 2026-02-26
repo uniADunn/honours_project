@@ -19,8 +19,8 @@ from shared.spectral_conversion import bands_wm2_from_payload
 
 #CALIBRATION SETTINGS HARD-CODED
 ZONE = "zone1"
-LED_COLOUR = "BLUE ONLY"
-NOTES = " desk LED strip, max brightness, 3-5cm distance from sensor,"
+LED_COLOUR = "FULL SPECTRUM"
+NOTES = " desk LED 2.7w WARM WHITE 4-6cm distance from sensor,"
 SAMPLE_INTERVAL_S = 5
 
 # ENV CONFIG
@@ -77,7 +77,7 @@ def parse_ts_mysql_utc(ts_str: str) -> datetime:
         ts_str = (ts_str or "").strip()
         if not ts_str:
             return None
-        if ts_str.endswit("Z"):
+        if ts_str.endswith("Z"):
             ts_str = ts_str.replace("Z", "+00:00")
         
         dt = datetime.fromisoformat(ts_str)
@@ -92,9 +92,9 @@ def safe_float(val) -> float:
     except Exception:
         return 0.0
 
-def config_check():
-    if LED_COLOUR not in {"BLUE ONLY", "GREEN ONLY", "RED ONLY"}:
-        raise ValueError(f"LED COLOUR must be one of 'BLUE ONLY', 'GREEN ONLY', 'RED ONLY'. Got: {LED_COLOUR}")
+def config_check()-> bool:
+    if LED_COLOUR not in {"BLUE ONLY", "GREEN ONLY", "RED ONLY", "FULL SPECTRUM"}:
+        raise ValueError(f"LED COLOUR must be one of 'BLUE ONLY', 'GREEN ONLY', 'RED ONLY', 'FULL SPECTRUM'. Got: {LED_COLOUR}")
     
     if not MQTT_HOST or not MQTT_TOPIC:
         raise RuntimeError("MQTT_HOST AND MQTT_TOPIC must be set in .env file")
@@ -104,6 +104,7 @@ def config_check():
     
     if not MYSQL_DB:
         raise RuntimeError("MYSQL_DB must be set in .env file")
+    return True
     
 def build_dummy_targets_by_slot() -> list[dict]:
     now_z = iso_utc_z_now()
@@ -149,7 +150,10 @@ def publish_cmd_and_wait_for_ack(zone:str, payload:dict, timeout_s: int = 10):
     waiter = AckWaiter()
 
     client_id = f"calibration_script_{uuid.uuid4()}"
-    client = mqtt.Client(client_id=client_id, callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    client = mqtt.Client(
+        client_id=client_id,
+        callback_api_version=mqtt.CallbackAPIVersion.VERSION2
+    )
     client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
     client.on_message = waiter.on_message
 
@@ -179,10 +183,10 @@ def publish_cmd_and_wait_for_ack(zone:str, payload:dict, timeout_s: int = 10):
 
     return None
 
-def send_start(zone:str, run_id:str):
+def send_start(zone:str, cal_run_id:str):
     payload =  {
         "type": "START",
-        "run_id": run_id,
+        "run_id": cal_run_id,
         "run_start_ts": iso_utc_z_now(),
         "sample_interval_s": 5,
         "targets_by_slot": build_dummy_targets_by_slot(),
@@ -191,10 +195,10 @@ def send_start(zone:str, run_id:str):
     }
     return publish_cmd_and_wait_for_ack(zone, payload, timeout_s=10)
 
-def send_stop(zone:str, run_id:str, timeout_s: int = 10):
+def send_stop(zone:str, cal_run_id:str, timeout_s: int = 10):
     payload = {
         "type": "STOP",
-        "run_id": run_id,
+        "run_id": cal_run_id,
         "source": "calibration_script",
         "zone": zone
     }
@@ -207,7 +211,8 @@ def require_ok_ready(ack:dict):
         detail = ack.get("detail")
         raise RuntimeError(f"[ACK ERROR] Expected ACK with status 'OK'. Got: {ack}. Detail: {detail}")
     
-def run_hour_calibration(run_id: str):
+def run_hour_calibration(cal_run_id: str):
+
     conn = mysql.connector.connect(
         host=MYSQL_HOST,
         port=MYSQL_PORT,
@@ -218,7 +223,7 @@ def run_hour_calibration(run_id: str):
     )
     cur = conn.cursor()
 
-    #cal_run_id = f"cal_test_run_{uuid.uuid4().hex[:8]}"
+    
     cal_run_seq = 0
 
     blue_j, green_j, red_j = 0.0, 0.0, 0.0
@@ -227,12 +232,14 @@ def run_hour_calibration(run_id: str):
     slot_end = None
 
     def on_connect(client, userdata, flags, rc, properties=None):
+        print(f"[mqtt] connected with result code {rc}")
         if rc != 0:
             raise RuntimeError(f"failed to connect to MQTT broker. RC: {rc}")
         client.subscribe(MQTT_TOPIC, qos=1)
         print("[CAL] subscribed to sensor data topic")
 
     def on_message(client, userdata, msg):
+        print(f"[cal] received message on topic {msg.topic}")
         nonlocal cal_run_seq, blue_j, green_j, red_j, last_ts, slot_start, slot_end
 
         raw = msg.payload.decode("utf-8", errors="replace")
@@ -256,7 +263,7 @@ def run_hour_calibration(run_id: str):
             return
         
         if slot_start is None:
-            slot_start = ts_mysql.replace(minute=0, second=0, microsecond=0)
+            slot_start = ts_mysql
             slot_end = slot_start + timedelta(hours=1)
             print(f"[cal] window: {slot_start} -> {slot_end}")
 
@@ -271,7 +278,10 @@ def run_hour_calibration(run_id: str):
         red_w = safe_float(bands.get("red_W_m2"))
 
         if last_ts is None:
-            dt_s = SAMPLE_INTERVAL_S
+            dt_s = 0.0
+            blue_j = blue_w * 3600.0
+            green_j = green_w * 3600.0
+            red_j = red_w * 3600.0
         else:
             dt = (ts_mysql - last_ts).total_seconds()
             dt_s = dt if 0 < dt < 60 else SAMPLE_INTERVAL_S
@@ -286,22 +296,25 @@ def run_hour_calibration(run_id: str):
         green_pred_j = green_j + (green_w * remaining_s)
         red_pred_j = red_j + (red_w * remaining_s)
 
-        cur.execute(
-            INSERT_SQL,
-            (
-                run_id, cal_run_seq, ts_mysql,
-                LED_COLOUR, zone, source,
-                slot_start, slot_end,
-                dt_s, NOTES,
+        try:
+            cur.execute(
+                INSERT_SQL,
+                (
+                    cal_run_id, cal_run_seq, ts_mysql,
+                    LED_COLOUR, zone, source,
+                    slot_start, slot_end,
+                    dt_s, NOTES,
 
-                blue_w, blue_j, blue_pred_j,
-                green_w, green_j, green_pred_j,
-                red_w, red_j, red_pred_j
+                    blue_w, blue_j, blue_pred_j,
+                    green_w, green_j, green_pred_j,
+                    red_w, red_j, red_pred_j
+                )
             )
-        )
+        except Exception as e:
+            print(f"[DB ERROR] insert failed: {repr(e)}")
 
-        if cal_run_seq % 30 == 0:
-            print(f"[cal] inserted seq {cal_run_seq} at ts {ts_mysql} (predicted J: blue: {blue_pred_j:.2f}")
+        if cal_run_seq % 5 == 0:
+            print(f"[cal] inserted seq {cal_run_seq} at ts {ts_mysql}")
         cal_run_seq += 1
         last_ts = ts_mysql
     
@@ -325,21 +338,28 @@ def run_hour_calibration(run_id: str):
     conn.close()
 
 
-
-# Print out the loaded environment variables to verify they are being read correctly (TESTING PURPOSES) (DELETE THIS LATER)
 if __name__ == "__main__":
-    config_check()
+   
+    if not config_check():
+        print("Configuration check failed. Please fix the issues and try again.")
+        sys.exit(1)
     
-    run_id = f"max_band_test_{uuid.uuid4().hex[:8]}"
-    print(f"run_id: {run_id}")
+    cal_run_id = f"cal_test_run_{uuid.uuid4().hex[:8]}"
 
-    ack = send_start(ZONE, run_id)
+    ack = send_start(ZONE, cal_run_id)
     print(f"[READY ACK] RECEIVED ACK: {ack}")
+    try:
+        print(f"entering run_hour_calibration")
+        run_hour_calibration(cal_run_id)
 
-    run_hour_calibration(run_id)
+        ack2 = send_stop(ZONE, cal_run_id)
+        print(f"[STOP ACK] RECEIVED ACK: {ack2}")
+    except KeyboardInterrupt:
+        print("Calibration interrupted by user.")
+    except Exception as e:
+        print(f"[ERROR] run_hour_calibration failed: {repr(e)}")
 
-    ack2 = send_stop(ZONE, run_id)
-    print(f"[STOP ACK] RECEIVED ACK: {ack2}")
+    
     
 
     

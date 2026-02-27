@@ -1,3 +1,4 @@
+import csv
 import os
 import sys
 import json
@@ -454,6 +455,35 @@ def insert_actuator_tracking_sim(conn, run_id:str, targets_by_slot: list, sim_ro
         cur.close()
 
     return len(db_rows)
+def export_sim_run_to_csv(conn, run_id:str, out_dir: str = "sim_data_exports")->str:
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    file_path = out_path / f"{run_id}_actuator_tracking_sim.csv"
+    query = """
+    SELECT
+        run_id, model, slot, t_offset_s,
+        target_blue_j, target_green_j, target_red_j,
+        duty_single, duty_blue, duty_green, duty_red,
+        accum_blue_j, accum_green_j, accum_red_j
+    FROM actuator_tracking_sim
+    WHERE run_id = %s
+    ORDER BY slot, t_offset_s;        
+    """
+    cur = conn.cursor()
+    cur.execute(query, (run_id,))
+    rows = cur.fetchall()
+    colnames = [desc[0] for desc in cur.description]
+
+    with open(file_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(colnames)
+        writer.writerows(rows)
+
+    cur.close()
+
+    print(f"[EXPORT] wrote {len(rows)} rows to {file_path}")
+    return str(file_path)
 
 def real_run():
     crop, zone, sample_interval_s = get_hardcoded_crop_zone_sample_interval()
@@ -664,7 +694,7 @@ def simulated_run():
 
         inserted = insert_actuator_tracking_sim(conn, run_id, targets_slots, sim_rows)
         print(f"[DB] inserted sim rows: {inserted}")
-
+        export_sim_run_to_csv(conn, run_id)
         LOGGER.info(f"[SIMULATION] simulated run started successfully")
         print("sim rows:", len(sim_rows))
 

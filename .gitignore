@@ -10,3 +10,4 @@ logs/incoming_sensor_payload.log
 logs/*.lock
 logs/incoming_sensor_payload.log
 data-process-scripts/*
+sim_data_exports/*

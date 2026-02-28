@@ -6,6 +6,10 @@ BANDS = ("blue", "green", "red")
 DT_S = 5.0
 HOUR_S = 3600.0
 
+OUTPUT_STEP_PCT = 5.0
+DEFAULT_TOLERANCE_PCT = 20.0
+DEFAULT_MIN_SAMPLE_BEFORE_DECISION = 3
+
 # placeholder max outputs from calibration (J/m2/hour)
 CAPS_J_PER_HOUR = {
     "blue": 728357.7226,
@@ -21,6 +25,23 @@ TARGETS_J_PER_HOUR = {
 
 def pct(val):
     return 100.0 * val
+
+def decide_energy(predicted_j: float, target_j: float, tolerance_pct:float)->str:
+    lo = target_j *(1.0 - tolerance_pct/100.0)
+    hi = target_j *(1.0 + tolerance_pct/100.0)
+
+    if predicted_j < lo:
+        return "INCREASE"
+    if predicted_j > hi:
+        return "DECREASE"
+    return "HOLD"
+
+def apply_step(duty_pct: float, decision:str, step_pct: float = OUTPUT_STEP_PCT)->float:
+    if decision == "INCREASE":
+        return min(100.0, duty_pct + step_pct)
+    if decision == "DECREASE":
+        return max(0.0, duty_pct - step_pct)
+    return duty_pct
 
 def caps_to_power_per_s(caps):
     #convert J per hour to J per second (W/m2)
@@ -144,7 +165,6 @@ def simulate_independent_leds_slot(slot_idx: int, targets_j: dict, caps_j_per_ho
         t += DT_S
     return rows, duties_by_band
 
-
 def simulate_single_lamp():
     rows, duties = simulate_single_lamp_slot(0, TARGETS_J_PER_HOUR, CAPS_J_PER_HOUR)
 
@@ -222,10 +242,111 @@ def simulate_target_by_slot(targets_by_slot: list[dict], caps_j_per_hour: dict):
 
         rows_single, _ = simulate_single_lamp_slot(slot_idx, targets_j, caps_j_per_hour)
         rows_independent, _ = simulate_independent_leds_slot(slot_idx, targets_j, caps_j_per_hour)
+        rows_closed_loop, _ = simulate_closed_loop_independent_leds_slot(
+            slot_idx, targets_j, caps_j_per_hour,
+            tolerance_pct=DEFAULT_TOLERANCE_PCT,
+            min_samples_before_decision=DEFAULT_MIN_SAMPLE_BEFORE_DECISION)
 
         all_rows.extend(rows_single)
         all_rows.extend(rows_independent)
+        all_rows.extend(rows_closed_loop)
     return all_rows
+
+def simulate_closed_loop_independent_leds_slot(
+        slot: int,
+        target_j: dict,
+        caps_j_per_hour:dict,
+        tolerance_pct: float = DEFAULT_TOLERANCE_PCT,
+        min_samples_before_decision: int = DEFAULT_MIN_SAMPLE_BEFORE_DECISION
+)->tuple[list[dict], dict]:
+    duty_blue = 0.0
+    duty_green = 0.0
+    duty_red = 0.0
+
+    accum_blue = 0.0
+    accum_green = 0.0
+    accum_red = 0.0
+
+    rows:list[dict] = []
+
+    n_steps = HOUR_S // DT_S
+
+    for step_idx in range(int(n_steps)):
+        t_offset_s = step_idx * DT_S
+        elapsed_s = t_offset_s + DT_S
+        remaining_s = max(0, HOUR_S - elapsed_s)
+
+        # measured power proxy from duty and caps
+        # cap is J per hour, at 100% -> J per second = cap/3600
+        meas_blue_w = (duty_blue / 100.0) * (caps_j_per_hour['blue']  / HOUR_S)
+        meas_green_w = (duty_green / 100.0) * (caps_j_per_hour['green']  / HOUR_S)
+        meas_red_w = (duty_red / 100.0) * (caps_j_per_hour['red']  / HOUR_S)
+
+        # integrate energy
+        accum_blue += meas_blue_w * DT_S
+        accum_green += meas_green_w * DT_S
+        accum_red += meas_red_w * DT_S
+
+        # predict end of hour energy
+        pred_blue = accum_blue + meas_blue_w * remaining_s
+        pred_green = accum_green + meas_green_w * remaining_s
+        pred_red = accum_red + meas_red_w * remaining_s
+
+        #decisions after min samples
+        if(step_idx + 1) < min_samples_before_decision:
+            decision_blue = "HOLD"
+            decision_green = "HOLD"
+            decision_red = "HOLD"
+        else:
+            decision_blue = decide_energy(pred_blue, target_j['blue'], tolerance_pct)
+            decision_green = decide_energy(pred_green, target_j['green'], tolerance_pct)
+            decision_red = decide_energy(pred_red, target_j['red'], tolerance_pct)
+
+        # apply step changes after decision
+        duty_blue = apply_step(duty_blue, decision_blue)
+        duty_green = apply_step(duty_green, decision_green)
+        duty_red = apply_step(duty_red, decision_red)
+
+        rows.append({
+            "model": "CLOSED_LOOP_INDEPENDENT_LED",
+            "slot": slot,
+            "t_offset_s": t_offset_s,
+
+            #duty fields
+            "duty_single": None,
+            "duty_blue": duty_blue/100.0,
+            "duty_green": duty_green/100.0,
+            "duty_red": duty_red/100.0,
+
+            #accumulated energy fields
+            "accum_blue": accum_blue,
+            "accum_green": accum_green,
+            "accum_red": accum_red,
+
+            #decision fields
+            "decision_blue": decision_blue,
+            "decision_green": decision_green,   
+            "decision_red": decision_red,
+
+            #predicted end of hour energy fields
+            "pred_blue_j": pred_blue,
+            "pred_green_j": pred_green,
+            "pred_red_j": pred_red,
+        })
+    summary = {
+        "slot": slot,
+        "model": "CLOSED_LOOP_INDEPENDENT_LED",
+        "final_accum_blue": accum_blue,
+        "final_accum_green": accum_green,
+        "final_accum_red": accum_red,
+        "final_duty_blue_pct": duty_blue,
+        "final_duty_green_pct": duty_green,
+        "final_duty_red_pct": duty_red,
+        "tolerance_pct": tolerance_pct,
+        "min_samples_before_decision": min_samples_before_decision,
+    }
+    return rows, summary
+
 
 DEMO_TARGETS_BY_SLOT = [
     {"slot": 0, "ref_ts": "demo", "target": {"blue": 8000.0, "green": 7000.0, "red": 6000.0, "total": 21000.0}},

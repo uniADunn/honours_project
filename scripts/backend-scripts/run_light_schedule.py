@@ -75,6 +75,7 @@ MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 
 RUN_MODE = "SIMULATION" # SIMULATION or REAL
+SIM_SCALE_MODE = True # if true, scales the reference profile down to be achievable by the lamps, if false, uses the raw target values (which may be unachievable)
 CAPS_J_PER_HOUR = {
     "blue": 728357.7226,
     "green": 422294.8749,
@@ -132,7 +133,7 @@ def parse_window_dates_input(year:int)-> tuple[datetime, datetime]:
             
 #slice helper
 def slice_profile(light_profile, start_ts:datetime, end_ts:datetime):
-    sliced = [row for row in light_profile if start_ts <= row[0] <= end_ts]
+    sliced = [row for row in light_profile if start_ts <= row[0] < end_ts]
     if not sliced:
         LOGGER.warning(f"No profile rows found in slice {start_ts} -> {end_ts}")
         raise ValueError(f"No profile rows found in slice {start_ts} -> {end_ts}")
@@ -399,13 +400,17 @@ def insert_actuator_tracking_sim(conn, run_id:str, targets_by_slot: list, sim_ro
     run_id, model, slot, t_offset_s,
     target_blue_j, target_green_j, target_red_j,
     duty_single, duty_blue, duty_green, duty_red,
-    accum_blue_j, accum_green_j, accum_red_j
+    accum_blue_j, accum_green_j, accum_red_j,
+    decision_blue, decision_green, decision_red,
+    pred_blue_j, pred_green_j, pred_red_j
     )
     VALUES(
     %(run_id)s, %(model)s, %(slot)s, %(t_offset_s)s,
     %(target_blue_j)s, %(target_green_j)s, %(target_red_j)s,
     %(duty_single)s, %(duty_blue)s, %(duty_green)s, %(duty_red)s,
-    %(accum_blue_j)s, %(accum_green_j)s, %(accum_red_j)s
+    %(accum_blue_j)s, %(accum_green_j)s, %(accum_red_j)s,
+    %(decision_blue)s, %(decision_green)s, %(decision_red)s,
+    %(pred_blue_j)s, %(pred_green_j)s, %(pred_red_j)s
     )
     ON DUPLICATE KEY UPDATE
     duty_single= VALUES(duty_single),
@@ -414,37 +419,53 @@ def insert_actuator_tracking_sim(conn, run_id:str, targets_by_slot: list, sim_ro
     duty_red= VALUES(duty_red),
     accum_blue_j= VALUES(accum_blue_j),
     accum_green_j= VALUES(accum_green_j),
-    accum_red_j= VALUES(accum_red_j)
+    accum_red_j= VALUES(accum_red_j),
+    decision_blue= VALUES(decision_blue),
+    decision_green= VALUES(decision_green),
+    decision_red= VALUES(decision_red),
+    pred_blue_j= VALUES(pred_blue_j),
+    pred_green_j= VALUES(pred_green_j),
+    pred_red_j= VALUES(pred_red_j)
 """
     slot_targets = {
         s["slot"]: s["target"]
         for s in targets_by_slot
     }
     db_rows = []
-
+    MJ_TO_J = 1_000_000.0
     for r in sim_rows:
         slot = r["slot"]
         target = slot_targets[slot]
 
         db_rows.append({
-            "run_id": run_id,
-            "model": r["model"],
-            "slot": slot,
-            "t_offset_s": r["t_offset_s"],
+        "run_id": run_id,
+        "model": r["model"],
+        "slot": slot,
+        "t_offset_s": r["t_offset_s"],
 
-            "target_blue_j": target["blue"] * 1000000, # convert MJ to J
-            "target_green_j": target["green"] * 1000000,
-            "target_red_j": target["red"] * 1000000,
+        "target_blue_j": float(target["blue"]) * MJ_TO_J,
+        "target_green_j": float(target["green"]) * MJ_TO_J,
+        "target_red_j": float(target["red"]) * MJ_TO_J,
 
-            "duty_single": r["duty_single"],
-            "duty_blue": r["duty_blue"],
-            "duty_green": r["duty_green"],
-            "duty_red": r["duty_red"],
+        "duty_single": r.get("duty_single"),
+        "duty_blue": r.get("duty_blue"),
+        "duty_green": r.get("duty_green"),
+        "duty_red": r.get("duty_red"),
 
-            "accum_blue_j": r["accum_blue"],
-            "accum_green_j": r["accum_green"],
-            "accum_red_j": r["accum_red"],
-        })
+        "accum_blue_j": float(r["accum_blue"]),
+        "accum_green_j": float(r["accum_green"]),
+        "accum_red_j": float(r["accum_red"]),
+
+        # NEW (nullable for old models)
+        "decision_blue": r.get("decision_blue"),
+        "decision_green": r.get("decision_green"),
+        "decision_red": r.get("decision_red"),
+
+        # NEW (nullable for old models)
+        "pred_blue_j": r.get("pred_blue_j"),
+        "pred_green_j": r.get("pred_green_j"),
+        "pred_red_j": r.get("pred_red_j"),
+    })
 
     cur = conn.cursor()
     try:
@@ -455,6 +476,7 @@ def insert_actuator_tracking_sim(conn, run_id:str, targets_by_slot: list, sim_ro
         cur.close()
 
     return len(db_rows)
+    
 def export_sim_run_to_csv(conn, run_id:str, out_dir: str = "sim_data_exports")->str:
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -465,7 +487,9 @@ def export_sim_run_to_csv(conn, run_id:str, out_dir: str = "sim_data_exports")->
         run_id, model, slot, t_offset_s,
         target_blue_j, target_green_j, target_red_j,
         duty_single, duty_blue, duty_green, duty_red,
-        accum_blue_j, accum_green_j, accum_red_j
+        accum_blue_j, accum_green_j, accum_red_j,
+        decision_blue, decision_green, decision_red,
+        pred_blue_j, pred_green_j, pred_red_j
     FROM actuator_tracking_sim
     WHERE run_id = %s
     ORDER BY slot, t_offset_s;        
@@ -484,6 +508,41 @@ def export_sim_run_to_csv(conn, run_id:str, out_dir: str = "sim_data_exports")->
 
     print(f"[EXPORT] wrote {len(rows)} rows to {file_path}")
     return str(file_path)
+
+def compute_scale_factor(targets_by_slot:list[dict], caps_j_per_hour: dict)->tuple[float,str]:
+    # scale nasa target values
+    MJ_to_J = 1_000_000.0
+
+    max_blue_j = max(float(s['target']['blue']) * MJ_to_J for s in targets_by_slot)
+    max_green_j = max(float(s['target']['green']) * MJ_to_J for s in targets_by_slot)
+    max_red_j = max(float(s['target']['red']) * MJ_to_J for s in targets_by_slot)
+
+    candidates = []
+    if max_blue_j > 0:
+        candidates.append(("blue", caps_j_per_hour['blue'] / max_blue_j))
+    if max_green_j > 0:
+        candidates.append(("green", caps_j_per_hour['green'] / max_green_j))
+    if max_red_j > 0:
+        candidates.append(("red", caps_j_per_hour['red'] / max_red_j))
+
+    if not candidates:
+        return 1.0, "none (all targets are zero)"
+    
+    limiting_band, s = min(candidates, key=lambda x: x[1])
+    s = min(float(s), 1.0)
+    return s, limiting_band
+
+def apply_global_scale(targets_by_slot:list[dict], scale_factor:float)->None:
+    # scales targets IN PLACE. keeps targets in MJ for consistency
+    # simulator converts MJ to J internally
+    for s in targets_by_slot:
+        tgt = s.get("target") or {}
+        tgt["blue"] = float(tgt.get("blue", 0.0)) * scale_factor
+        tgt["green"] = float(tgt.get("green", 0.0)) * scale_factor
+        tgt["red"] = float(tgt.get("red", 0.0)) * scale_factor
+        if "total" in tgt and tgt["total"] is not None:
+            tgt['total'] = float(tgt['total']) * scale_factor
+        s["target"] = tgt
 
 def real_run():
     crop, zone, sample_interval_s = get_hardcoded_crop_zone_sample_interval()
@@ -683,6 +742,7 @@ def simulated_run():
         if not targets_slots:
             raise RuntimeError("targets_slots is empty")
         
+        
         if "slot" not in targets_slots[0]:
             raise KeyError(f"targets_slots[0] is missing 'slot'. key={list(targets_slots[0].keys())}")
         
@@ -690,6 +750,18 @@ def simulated_run():
         if missing:
             i = missing[0]
             raise KeyError(f"targets_slots[{i}] missing 'slot'. keys={list(targets_slots[i].keys())}")
+        
+        #compute scale factor and apply 
+        scale_factor, limiting_band = compute_scale_factor(targets_slots, CAPS_J_PER_HOUR)
+        print(f"[scale] computed global scale factor: {scale_factor:.6f} (limiting band: {limiting_band})")
+
+        if SIM_SCALE_MODE:
+            apply_global_scale(targets_slots, scale_factor)
+
+        print(f"[scale] sim scale mode: {SIM_SCALE_MODE} "
+              f"scale factor: {scale_factor:.6f} "
+              f"limiting_band: {limiting_band} ")
+
         sim_rows = simulate_target_by_slot(targets_slots, CAPS_J_PER_HOUR)
 
         inserted = insert_actuator_tracking_sim(conn, run_id, targets_slots, sim_rows)

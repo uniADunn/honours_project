@@ -7,7 +7,7 @@ DT_S = 5.0
 HOUR_S = 3600.0
 
 OUTPUT_STEP_PCT = 5.0
-DEFAULT_TOLERANCE_PCT = 20.0
+DEFAULT_TOLERANCE_PCT = 5.0
 DEFAULT_MIN_SAMPLE_BEFORE_DECISION = 3
 
 # placeholder max outputs from calibration (J/m2/hour)

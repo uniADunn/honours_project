@@ -75,7 +75,7 @@ MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 
 RUN_MODE = "SIMULATION" # SIMULATION or REAL
-SIM_SCALE_MODE = True # if true, scales the reference profile down to be achievable by the lamps, if false, uses the raw target values (which may be unachievable)
+SIM_SCALE_MODE = False # if true, scales the reference profile down to be achievable by the lamps, if false, uses the raw target values (which may be unachievable)
 CAPS_J_PER_HOUR = {
     "blue": 728357.7226,
     "green": 422294.8749,
@@ -481,7 +481,11 @@ def export_sim_run_to_csv(conn, run_id:str, out_dir: str = "sim_data_exports")->
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    file_path = out_path / f"{run_id}_actuator_tracking_sim.csv"
+    if SIM_SCALE_MODE:
+        file_path = out_path / f"scaled_actuator_tracking_{run_id}.csv"
+    else:
+        file_path = out_path / f"unscaled_actuator_tracking_{run_id}.csv"
+
     query = """
     SELECT
         run_id, model, slot, t_offset_s,

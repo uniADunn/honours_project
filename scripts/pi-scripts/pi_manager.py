@@ -181,14 +181,14 @@ def clamp_action_decision(
             final = "HOLD"
             reasons.append("target energy is effectively zero and dark.")
 
-    #virtual output saturation clamps
-    # if raw_decision == "DECREASE" and output_level_pct <= 0.0:
-    #     final = "HOLD"
-    #     reasons.append("output already at 0%, cannot decrease further.")
+    # virtual output saturation clamps
+    if raw_decision == "DECREASE" and output_level_pct <= 0.0:
+        final = "HOLD"
+        reasons.append("output already at 0%, cannot decrease further.")
 
-    # if raw_decision == "INCREASE" and output_level_pct >= 100.0:
-    #     final = "HOLD"
-    #     reasons.append("output already at 100%, cannot increase further.")
+    if raw_decision == "INCREASE" and output_level_pct >= 100.0:
+        final = "HOLD"
+        reasons.append("output already at 100%, cannot increase further.")
 
     return final, reasons
 
@@ -214,13 +214,13 @@ class PiManager:
         self.sample_interval_s = 5
         self.seq = 0
         self.decision_policy: dict = {
-            "tolerance_pct": 20.0,
+            "tolerance_pct": 5.0,
             "min_samples_before_decision": 3
         }
         self.output_level_pct = {
-            "blue": 20.0,
-            "green": 20.0,
-            "red": 20.0
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
         }
 
     def reset_run(self) -> None:

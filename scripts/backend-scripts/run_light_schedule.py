@@ -75,7 +75,7 @@ MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 
 RUN_MODE = "SIMULATION" # SIMULATION or REAL
-SIM_SCALE_MODE = False # if true, scales the reference profile down to be achievable by the lamps, if false, uses the raw target values (which may be unachievable)
+SIM_SCALE_MODE = True # if true, scales the reference profile down to be achievable by the lamps, if false, uses the raw target values (which may be unachievable)
 CAPS_J_PER_HOUR = {
     "blue": 728357.7226,
     "green": 422294.8749,
@@ -481,37 +481,50 @@ def export_sim_run_to_csv(conn, run_id:str, out_dir: str = "sim_data_exports")->
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    if SIM_SCALE_MODE:
-        file_path = out_path / f"scaled_actuator_tracking_{run_id}.csv"
-    else:
-        file_path = out_path / f"unscaled_actuator_tracking_{run_id}.csv"
+    prefix = "scaled" if SIM_SCALE_MODE else "unscaled"
 
-    query = """
-    SELECT
-        run_id, model, slot, t_offset_s,
-        target_blue_j, target_green_j, target_red_j,
-        duty_single, duty_blue, duty_green, duty_red,
-        accum_blue_j, accum_green_j, accum_red_j,
-        decision_blue, decision_green, decision_red,
-        pred_blue_j, pred_green_j, pred_red_j
-    FROM actuator_tracking_sim
-    WHERE run_id = %s
-    ORDER BY slot, t_offset_s;        
-    """
-    cur = conn.cursor()
-    cur.execute(query, (run_id,))
-    rows = cur.fetchall()
-    colnames = [desc[0] for desc in cur.description]
+    models = [
+        "SINGLE_LAMP",
+        "INDEPENDENT_LED",
+        "CLOSED_LOOP_INDEPENDENT_LED",
+    ]
 
-    with open(file_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(colnames)
-        writer.writerows(rows)
+    written_files = []
 
-    cur.close()
+    for model in models:
 
-    print(f"[EXPORT] wrote {len(rows)} rows to {file_path}")
-    return str(file_path)
+        file_path = out_path / f"{prefix}_actuator_tracking_{run_id}_{model}.csv"
+
+        query = """
+        SELECT
+            run_id, model, slot, t_offset_s,
+            target_blue_j, target_green_j, target_red_j,
+            duty_single, duty_blue, duty_green, duty_red,
+            accum_blue_j, accum_green_j, accum_red_j,
+            decision_blue, decision_green, decision_red,
+            pred_blue_j, pred_green_j, pred_red_j
+        FROM actuator_tracking_sim
+        WHERE run_id = %s AND model = %s
+        ORDER BY slot, t_offset_s;
+        """
+
+        cur = conn.cursor()
+        cur.execute(query, (run_id, model))
+
+        rows = cur.fetchall()
+        colnames = [desc[0] for desc in cur.description]
+
+        with open(file_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(colnames)
+            writer.writerows(rows)
+
+        cur.close()
+
+        LOGGER.info(f"[EXPORT] wrote {len(rows)} rows -> {file_path}")
+        written_files.append(str(file_path))
+
+    return written_files
 
 def compute_scale_factor(targets_by_slot:list[dict], caps_j_per_hour: dict)->tuple[float,str]:
     # scale nasa target values

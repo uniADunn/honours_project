@@ -1,29 +1,32 @@
+# standard libaries for JSON, timing, and UTC timestamps
 import json
 import time
 from datetime import datetime, timezone
-
+# MQTT client for sending sensor readings and receiving control commands
 import paho.mqtt.client as mqtt
-
+# raspberry pi i2c and adafruit drivers for AS7341 and BH1750 sensors
 import board
 import busio
 import adafruit_bh1750
 import adafruit_as7341
 
+# deque buffer for storing messages when MQTT connection is down
 from collections import deque
-
+# load secrets and config MQTT / MySQL credentials from .env file
 import os
 from dotenv import load_dotenv
-
+# file and console logging with log rotation
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-
+# spectral conversion helpers: convert raw AS7314 counts -> W/m2 bands
 from shared import spectral_conversion
 from shared.spectral_conversion import bands_wm2_from_counts, safe_sum
+
 load_dotenv()
 
 _last_buffer_log_ts = 0.0
-
+# create a rotating file logger so pi runs can be debugged
 def setup_file_logger(
         logger_name: str = "pi_manager_zone1",
         filename: str = "pi_manager_zone1.log",
@@ -60,6 +63,7 @@ def setup_file_logger(
     logger._configured_file = True
     logger.info(f"[PI MANAGER] Pi Manager Logging Initialized. log_file: {log_file}")
     return logger
+# initialize global logger instance
 LOGGER = setup_file_logger()
 
 #MQTT CONFIGURATION
@@ -68,11 +72,12 @@ BROKER_PORT = int(os.getenv("MQTT_PORT"))
 BROKER_USER = os.getenv("MQTT_USER")
 BROKER_PASSWORD = os.getenv("MQTT_PASSWORD")
 
+# MQTT TOPICS
 DATA_TOPIC = "adunn/sensor/light/zone1"
 CMD_TOPIC = "adunn/control/zone1/cmd"
 ACK_TOPIC = "adunn/control/zone1/ack"
 DECISION_TOPIC = "adunn/control/zone1/decision"
-
+#SENSOR / CONTROL CONFIGURATION
 SOURCE = "pi-01"
 ZONE = "ZONE1"
 AS7341_DEV_ID = "as7341_01"
@@ -83,7 +88,7 @@ AS7341_GAIN_X = adafruit_as7341.Gain.GAIN_64X
 AS7341_GAIN = 64  # 64X gain; for database
 AS7341_ATIME = 0
 AS7341_ASTEP = 9999
-
+# control decision thresholds
 WM2_EPS = 0.01  # BELOW THIS, TREAT AS DARK
 TARGET_J_EPS = 50.0 #BELOW THIS, TREAT TARGET AS ZERO
 OUTPUT_STEP_PCT = 5.0 # VIRTUAL STEP PER SAMPLE
@@ -115,7 +120,7 @@ def flush_buffer(client:mqtt.Client) -> int:
         except Exception:
             break
     return sent
-
+# log buffer state every 30s or on demand, to monitor if messages are being buffered due to MQTT connection issues
 def log_buffer_state(force: bool = False) -> None:
     global _last_buffer_log_ts
     now = time.time()
@@ -125,6 +130,7 @@ def log_buffer_state(force: bool = False) -> None:
         )
         _last_buffer_log_ts = now
 
+# time utilities for UTC timestamps and ISO formatting, plus parsing ISO timestamps from commands
 def utc_time_now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
@@ -143,15 +149,18 @@ def parse_iso_utc(strDate: str) -> datetime:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
+# calculate integration time in ms for AS7341 based on atime and astep settings, for reference in payload and potential use in energy calculations
 def calculate_integration_time_ms(atime: int, astep: int)->float:
     return ((atime+1)*(astep+1)*2.78)/1000
 
+# compute current slot index based on run start timestamp and current timestamp, for 1 hour slots
 def compute_slot(run_start_ts: datetime, now_ts: datetime)-> int:
     elapsed_s = (now_ts - run_start_ts).total_seconds()
     if elapsed_s < 0:
         return 0
     return int(elapsed_s //3600)
 
+# decide whether to INCREASE, DECREASE, or HOLD energy for a band based on predicted vs target joules and a tolerance percentage
 def decide_energy(pred_j: float, tgt_j: float, tolerance_pct: float) -> str:
     lower = tgt_j * (1.0 - (tolerance_pct /100.0))
     upper = tgt_j * (1.0 + (tolerance_pct /100.0))
@@ -162,7 +171,7 @@ def decide_energy(pred_j: float, tgt_j: float, tolerance_pct: float) -> str:
         return "DECREASE"
     else:
         return "HOLD"
-
+# clamp the raw decision based on measured conditions and virtual output saturation, returning the final decision and any reasons for clamping
 def clamp_action_decision(
         raw_decision: str,
         measured_wm2: float,
@@ -192,6 +201,7 @@ def clamp_action_decision(
 
     return final, reasons
 
+# main PiManager class to manage sensor readings, run state, and control decisions
 class PiManager:
     def __init__(self):
         self.i2c = None
@@ -223,6 +233,7 @@ class PiManager:
             "red": 0.0
         }
 
+    # reset run state to defaults, called on STOP or when START command has invalid parameters
     def reset_run(self) -> None:
         self.run_active = False
         self.run_id = None
@@ -241,7 +252,7 @@ class PiManager:
             "green": 0.0,
             "red": 0.0
         }
-
+    # initialize run state based on START command parameters, called from handle_start_cmd after validating parameters
     def init_run(self, run_id: str, run_start_ts: datetime, targets_by_slot: list,
                  decision_policy: dict, sample_interval_s: int) -> None:
         
@@ -266,6 +277,7 @@ class PiManager:
             "red": 0.0
         }        
 
+    # parse and validate START command parameters, returning a tuple of (ok, detail, parsed_params) where ok is a boolean indicating if parameters are valid, detail is an error message if not valid or "OK" if valid, and parsed_params is a dict of the parsed parameters if valid or empty dict if not valid
     def parse_start_cmd(self, cmd: dict) -> tuple[bool, str, dict]:
         run_id = cmd.get("run_id")
         if not run_id:
@@ -291,6 +303,7 @@ class PiManager:
             "decision_policy": decision_policy
         }
     
+    # handle incoming MQTT commands, routing to specific handlers based on command type (START, STOP, EXIT), and validating run_id for STOP and EXIT commands to ensure they apply to the current run
     def handle_cmd(self, client: mqtt.Client, cmd: dict) -> None:
         ctype = str(cmd.get("type", "")).upper()
         if ctype == "START":
@@ -303,6 +316,7 @@ class PiManager:
             LOGGER.error(f"[PI MANAGER] Unknown Command Type: {cmd}")
             print(f"[CMD] Unknown Command Type: {cmd}")
 
+    # handle START command: parse and validate parameters, initialize run state, initialize sensors, and send READY ack with status and details. If parameters are invalid or sensors fail to initialize, send READY ack with error status and details, and do not start the run.
     def handle_start_cmd(self, client: mqtt.Client, cmd: dict) -> None:
         ok, detail, parsed = self.parse_start_cmd(cmd)
         run_id = parsed.get("run_id") if parsed else cmd.get("run_id")
@@ -356,12 +370,12 @@ class PiManager:
 
         LOGGER.info(f"[PI MANAGER] Started run_id: {self.run_id}, sample interval: {self.sample_interval_s}s")
         print(f"[RUN] Started run_id: {self.run_id}, sample interval: {self.sample_interval_s}s")
-
+    # check if the run_id in the command matches the current run_id, returning a tuple of (ok, detail) where ok is a boolean indicating if they match, and detail is an error message if they don't match or "OK" if they do match
     def _check_run_id_match(self, cmd_run_id: str) -> tuple[bool, str]:
         if cmd_run_id and self.run_id and str(cmd_run_id) != self.run_id:
             return False, f"run_id mismatch: received {cmd_run_id}, current{self.run_id}"
         return True, "OK"
-    
+    # handle STOP command: validate run_id, reset run state, and send STOPPED ack with status and details. If run_id is invalid, send STOPPED ack with error status and details, and do not reset run state.
     def handle_stop_cmd(self, client: mqtt.Client, cmd: dict) -> None:
         ok, detail = self._check_run_id_match(cmd.get("run_id"))
         if not ok:
@@ -389,7 +403,8 @@ class PiManager:
         })
         LOGGER.info(f"[PI MANAGER] stopped run_id: {stopped_run}")
         print(f"[RUN] Stopped run_id: {stopped_run}")
-
+    
+    # handle EXIT command: validate run_id, reset run state, set shutdown flag, and send EXITING ack with status and details. If run_id is invalid, send EXITING ack with error status and details, and do not reset run state.
     def handle_exit_cmd(self, client: mqtt.Client, cmd: dict) -> None:
         ok, detail = self._check_run_id_match(cmd.get("run_id"))
         if not ok:
@@ -418,7 +433,7 @@ class PiManager:
         })
         LOGGER.info(f"[PI MANAGER] Shutdown requested for run_id: {stopped_run}")
         print(f"[RUN] Shutdown requested for run_id: {stopped_run}")
-
+    # initialize sensors, returning a tuple of (ok, detail) where ok is a boolean indicating if at least one sensor initialized successfully, and detail is a message indicating which sensors initialized or failed
     def init_sensors(self) -> tuple[bool, str]:
         try:
             if self.i2c is None:
@@ -458,7 +473,8 @@ class PiManager:
             return True, "OK (BH1750 initialized, AS7341 not connected)"
         else:
             return True, "OK (both sensors initialized)"
-        
+    
+    # build payload for MQTT publish based on current sensor readings and run state, returning a tuple of (payload_str, raw_channels) where payload_str is the JSON string to publish, and raw_channels is a dict of the raw AS7341 channel counts and BH1750 lux for potential use in control decision calculations
     def build_payload(self) -> tuple[str, dict]:
         #BH1750 lux
         if self.lux is None:
@@ -559,7 +575,7 @@ class PiManager:
             "bh1750_lux": bh1750_lux,
         }
         return json.dumps(payload), raw_channels
-    
+    # publish an ACK message to the ACK_TOPIC with the given message dict as payload, handling MQTT connection issues and logging the result
     def ack(self, client: mqtt.Client, msg: dict):
         payload = json.dumps(msg)
         if not client.is_connected():
@@ -570,7 +586,7 @@ class PiManager:
             LOGGER.error(f"[ACK] Publish failed rc={info.rc}. payload: {payload}")
         else:
             LOGGER.info(f"[ACK] published to {ACK_TOPIC}: payload: {payload}")
-
+# main function to initialize MQTT client, set up callbacks, and run the main loop to handle commands and publish sensor readings at the configured interval, while managing run state and control decisions
 def main():
     manager = PiManager()
     client = mqtt.Client(

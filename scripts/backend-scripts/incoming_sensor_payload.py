@@ -61,7 +61,7 @@ INSERT INTO {TABLE}(
     %(blue_W_m2)s, %(green_W_m2)s, %(red_W_m2)s
     );
     """
-
+# SQL Insert statement for decisions with upsert on duplicate key (run_id, run_seq, slot)
 INSERT_DECISIONS_SQL = f"""
 INSERT INTO {DECISION_TABLE}(
     run_id, run_seq, ts_utc, source, zone, slot, ref_ts_utc,
@@ -141,7 +141,7 @@ ON DUPLICATE KEY UPDATE
     red_predicted_j_m2_slot = VALUES(red_predicted_j_m2_slot),
     red_decision = VALUES(red_decision);
 """
-
+# helper function to set up a console logger for backend ingestion, ensuring only one console logger is configured
 def setup_console_logger() -> logging.Logger:
     logger = logging.getLogger("backend_ingestion")
     if getattr(logger, "_configured_console", False):
@@ -158,9 +158,9 @@ def setup_console_logger() -> logging.Logger:
     logger._configured_console = True
     logger.info("Console logger initialized (file logging not yet enabled)")
     return logger
-
+# set up the main logger for the script
 LOGGER = setup_console_logger()
-
+# helper function to enable file logging with rotation, ensuring only one file handler is configured for the specified log file
 def enable_file_logging(logger: logging.Logger)-> Path:
     repo_root = Path(__file__).resolve().parents[2]
     log_dir = repo_root / "logs"
@@ -187,7 +187,7 @@ def enable_file_logging(logger: logging.Logger)-> Path:
     logger.info("file logging enabled. log_file %s", log_file)
     return log_file
 
-
+# helper class to implement a single instance lock using a named mutex on Windows, preventing multiple instances of the script from running simultaneously and accessing the database or log files at the same time
 class SingleInstanceLock:
     def __init__(self, name: str):
         self.name = name
@@ -253,7 +253,7 @@ if not MYSQL_PASSWORD:
     raise RuntimeError("MYSQL_PASSWORD environment variable is not set.\nCreate a .env file (see .env.example)")
 
 LOGGER.info(f"[CONFIG] Reference Irradiance E_ref = {spectral_conversion.E_REF_W_M2} W/m2")
-
+# helper function to handle incoming DECISION messages, extract relevant fields, and insert the decision data into the database with error handling and logging
 def handle_decision_message(userdata, data: dict) -> None:
     run_id = (data.get("run_id") or "").strip()
     if not run_id:
@@ -356,6 +356,7 @@ def as_int_or_none(value):
         return None
 
 #DB 
+# helper function to create a new database connection using mysql.connector with the configured parameters, returning the connection object
 def db_connect():
     return mysql.connector.connect(
         host = MYSQL_HOST,
@@ -365,7 +366,7 @@ def db_connect():
         database = MYSQL_DB,
         autocommit = True
     )
-
+# helper function to attempt database connection with exponential backoff retries, logging each attempt and error
 def db_connect_forever():
     backoff_s = 1
     while True:
@@ -378,7 +379,7 @@ def db_connect_forever():
             LOGGER.error(f"[DB] Connection to database failed: {e}. Retrying in {backoff_s} seconds...")
             time.sleep(backoff_s)
             backoff_s = min(backoff_s * 2, 60)
-
+# helper function to insert sensor reading data into the database with error handling and retry logic, including specific handling for foreign key constraint errors and automatic reconnection attempts
 def db_insert_readings_with_reconnect(userdata, row):
     for attempt in (1,2):
         try:
@@ -425,7 +426,7 @@ def db_insert_readings_with_reconnect(userdata, row):
                     LOGGER.error(f"[DB] Reconnection failed: {reconnect_err}.")
                     return False
             return False
-
+# helper function to insert decision data into the database with error handling and retry logic, including specific handling for foreign key constraint errors and automatic reconnection attempts
 def db_insert_decision_with_reconnect(userdata, row):
     for attempt in (1,2):
         try:
@@ -477,6 +478,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
     client.subscribe(MQTT_DECISION_TOPIC, qos=1)
     LOGGER.info(f"[MQTT] Subscribed to topics: {MQTT_TOPIC}, {MQTT_DECISION_TOPIC}")
 
+# helper function to handle incoming MQTT messages, parse the payload, validate required fields, convert timestamps, calculate irradiance values, and insert the data into the database with error handling and logging
 def on_message(client, userdata, msg):
     raw = msg.payload.decode("utf-8", errors="replace")
 
@@ -572,10 +574,12 @@ def on_message(client, userdata, msg):
     except Error as e:
         LOGGER.error(f"[DB] Insert failed: {e}\nrow: {row}")
 
+# helper function to handle MQTT disconnection events, logging the reason code and flags for debugging and monitoring purposes
 def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
     LOGGER.info(f"[MQTT] Disconnected with reason_code: {reason_code}, flags: {disconnect_flags}.")
     #print(f"[MQTT] Disconnected with reason_code: {reason_code}.")
 
+# helper function to run the MQTT client loop indefinitely, handling connection setup, reconnection logic with exponential backoff, and graceful shutdown on keyboard interrupt
 def run_mqtt_forever(conn, cur):
     if not (MQTT_USER and MQTT_PASSWORD):
         LOGGER.error("MQTT_USER / MQTT_PASSWORD missing in backend .env")
@@ -639,8 +643,7 @@ def run_mqtt_forever(conn, cur):
             backoff_s = min(backoff_s * 2, 60)
             continue
 
-
-
+# main function to establish database connection and start the MQTT client loop, ensuring proper cleanup of database resources on exit
 def main():
     
     conn = None
@@ -658,6 +661,7 @@ def main():
         except Exception:
             pass
 
+# entry point of the script, implementing a single instance lock to prevent multiple instances from running simultaneously, enabling file logging, and handling exceptions with appropriate logging and exit codes
 if __name__ == "__main__":
     lock = SingleInstanceLock(r"Local\HonoursProject_BackendIngestion")
     try:

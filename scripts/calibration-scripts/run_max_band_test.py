@@ -91,7 +91,7 @@ def safe_float(val) -> float:
         return 0.0 if val is None else float(val)
     except Exception:
         return 0.0
-
+# CONFIG CHECK
 def config_check()-> bool:
     if LED_COLOUR not in {"BLUE ONLY", "GREEN ONLY", "RED ONLY", "FULL SPECTRUM"}:
         raise ValueError(f"LED COLOUR must be one of 'BLUE ONLY', 'GREEN ONLY', 'RED ONLY', 'FULL SPECTRUM'. Got: {LED_COLOUR}")
@@ -105,7 +105,8 @@ def config_check()-> bool:
     if not MYSQL_DB:
         raise RuntimeError("MYSQL_DB must be set in .env file")
     return True
-    
+
+# build dummy targets by slot for testing, returning a list of dicts with slot number, reference timestamp, and target values for blue, green, and red channels
 def build_dummy_targets_by_slot() -> list[dict]:
     now_z = iso_utc_z_now()
     return[{
@@ -117,11 +118,11 @@ def build_dummy_targets_by_slot() -> list[dict]:
             "red": 0.0
         }
     }]
-    
+# helper class to wait for ACK messages on the MQTT topic, storing the last received ACK and providing a method to check if it matches expected type, run_id, and zone values
 class AckWaiter:
     def __init__(self):
         self.last_ack = None
-
+    # MQTT on_message callback to decode incoming messages, parse as JSON, and store the last ACK message in the instance variable last_ack. If decoding or parsing fails, the message is ignored.
     def on_message(self, client, userdata, msg):
         try:
             payload = msg.payload.decode("utf-8", errors="replace")
@@ -129,7 +130,8 @@ class AckWaiter:
             self.last_ack = data
         except Exception:
             return
-        
+    
+    # check if the last received ACK matches the expected type, run_id, and zone values
     def matches(self, type:str, run_id: str, zone: str) -> bool:
         if not self.last_ack:
             return False
@@ -143,7 +145,7 @@ class AckWaiter:
         if str((zone) or "").strip().lower() != str(zone or "").strip().lower():
             return False
         return True
-    
+# helper function to publish a command payload to the MQTT command topic for the given zone, and wait for an ACK message on the corresponding ACK topic that matches the expected type, run_id, and zone values. The function returns the ACK message if received within the timeout period, or None if no matching ACK is received.
 def publish_cmd_and_wait_for_ack(zone:str, payload:dict, timeout_s: int = 10):
 
     cmd_topic, ack_topic = get_mqtt_topics(zone)
@@ -182,7 +184,7 @@ def publish_cmd_and_wait_for_ack(zone:str, payload:dict, timeout_s: int = 10):
     client.disconnect()
 
     return None
-
+# helper function to send a START command with the given zone and calibration run ID, and wait for an ACK message confirming the command was received and processed. The function returns the ACK message if received within the timeout period, or None if no ACK is received.
 def send_start(zone:str, cal_run_id:str):
     payload =  {
         "type": "START",
@@ -195,6 +197,7 @@ def send_start(zone:str, cal_run_id:str):
     }
     return publish_cmd_and_wait_for_ack(zone, payload, timeout_s=10)
 
+# helper function to send a STOP command with the given zone and calibration run ID, and wait for an ACK message confirming the command was received and processed. The function returns the ACK message if received within the timeout period, or None if no ACK is received.
 def send_stop(zone:str, cal_run_id:str, timeout_s: int = 10):
     payload = {
         "type": "STOP",
@@ -204,13 +207,15 @@ def send_stop(zone:str, cal_run_id:str, timeout_s: int = 10):
     }
     return publish_cmd_and_wait_for_ack(zone, payload, timeout_s)
 
+# helper function to validate that the received ACK message has a status of "OK", and raise a RuntimeError with details if the ACK is missing or has an error status
 def require_ok_ready(ack:dict):
     if not ack:
         raise RuntimeError("No ACK received within timeout period")
     if str(ack.get("status") or "").upper() != "OK":
         detail = ack.get("detail")
         raise RuntimeError(f"[ACK ERROR] Expected ACK with status 'OK'. Got: {ack}. Detail: {detail}")
-    
+
+# helper function to run a one-hour calibration session, collecting sensor data, calculating joules, and storing results in the database
 def run_hour_calibration(cal_run_id: str):
 
     conn = mysql.connector.connect(
@@ -231,6 +236,7 @@ def run_hour_calibration(cal_run_id: str):
     slot_start = None
     slot_end = None
 
+    # MQTT callbacks
     def on_connect(client, userdata, flags, rc, properties=None):
         print(f"[mqtt] connected with result code {rc}")
         if rc != 0:

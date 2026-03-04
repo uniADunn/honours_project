@@ -1,31 +1,35 @@
 
-
+# bands to be simulated
 BANDS = ("blue", "green", "red")
 
-#placeholders
-DT_S = 5.0
-HOUR_S = 3600.0
+# simulation parameters
+DT_S = 5.0 # time step for simulation
+HOUR_S = 3600.0 # number of seconds in an hour
 
+# control parameters for closed loop independent led control
 OUTPUT_STEP_PCT = 5.0
 DEFAULT_TOLERANCE_PCT = 5.0
 DEFAULT_MIN_SAMPLE_BEFORE_DECISION = 3
 
-# placeholder max outputs from calibration (J/m2/hour)
+# max outputs from calibration (J/m2/hour)
+# values are maximum energy the hardware can deliver per hour (J/m2/hour) at 100% duty.
 CAPS_J_PER_HOUR = {
     "blue": 728357.7226,
     "green": 422294.8749,
     "red": 129824.7369,
 }
 
+# example targets
 TARGETS_J_PER_HOUR = {
     "blue": 8000,
     "green": 7000,
     "red": 6000,
 }
 
+# convert a 0..1 fraction into a 0..100 percentage
 def pct(val):
     return 100.0 * val
-
+# decide increase/decrease/hold based on predicted vs target energy, with a tolerance band
 def decide_energy(predicted_j: float, target_j: float, tolerance_pct:float)->str:
     lo = target_j *(1.0 - tolerance_pct/100.0)
     hi = target_j *(1.0 + tolerance_pct/100.0)
@@ -36,6 +40,7 @@ def decide_energy(predicted_j: float, target_j: float, tolerance_pct:float)->str
         return "DECREASE"
     return "HOLD"
 
+# apply a step change to the duty factor, duty clamped to 0-100%
 def apply_step(duty_pct: float, decision:str, step_pct: float = OUTPUT_STEP_PCT)->float:
     if decision == "INCREASE":
         return min(100.0, duty_pct + step_pct)
@@ -43,6 +48,7 @@ def apply_step(duty_pct: float, decision:str, step_pct: float = OUTPUT_STEP_PCT)
         return max(0.0, duty_pct - step_pct)
     return duty_pct
 
+# convert caps from j per hour -> j per second.
 def caps_to_power_per_s(caps):
     #convert J per hour to J per second (W/m2)
     return {b: caps[b] / HOUR_S for b in BANDS}
@@ -60,14 +66,14 @@ def compute_duty_factor(accumulated, targets, power_per_sec, remaining_time_s):
     for band in BANDS:
         remaining_dose = targets[band] - accumulated[band]
 
-        # if already at or above target -> dont add more
+        # if already at or above target 
         if remaining_dose <= 0:
             ratios.append(0.0)
             continue
 
         max_possible = power_per_sec[band] * remaining_time_s
 
-        # if lamp cant deliver anything -> 0
+        # if lamp cant deliver anything
         if max_possible <= 0:
             ratios.append(0.0)
             continue
@@ -77,7 +83,7 @@ def compute_duty_factor(accumulated, targets, power_per_sec, remaining_time_s):
     if not ratios:
         return 0.0
 
-    #choose the smallest ratio to ensure we dont overshoot any band
+    #choose the smallest ratio to ensure no overshoot any band
     u = min(1.0, min(ratios))
 
     # keep within 0-1
@@ -86,6 +92,7 @@ def compute_duty_factor(accumulated, targets, power_per_sec, remaining_time_s):
 
     return u
 
+# simulate 1 hour for a single full spectrum lamp, single duty factor for all bands returns list of rows (one per 5s step), plus duties list
 def simulate_single_lamp_slot(slot_idx: int, targets_j: dict, caps_j_per_hour: dict):
     # simulate 1 hour for a single full spectrum lamp,
     # returns list of rows (one per 5s step), plus duties list
@@ -119,7 +126,7 @@ def simulate_single_lamp_slot(slot_idx: int, targets_j: dict, caps_j_per_hour: d
 
         t += DT_S
     return rows, duties
-
+# simulate 1 hour with independent band control, returns list of rows (one per 5s step), plus duties_by_band dict
 def simulate_independent_leds_slot(slot_idx: int, targets_j: dict, caps_j_per_hour: dict):
     # simulate 1 hour with independent band control
     # returns list of rows (one per 5s step), plus duties_by_band dict
@@ -165,6 +172,7 @@ def simulate_independent_leds_slot(slot_idx: int, targets_j: dict, caps_j_per_ho
         t += DT_S
     return rows, duties_by_band
 
+# 
 def simulate_single_lamp():
     rows, duties = simulate_single_lamp_slot(0, TARGETS_J_PER_HOUR, CAPS_J_PER_HOUR)
 
@@ -204,6 +212,7 @@ def simulate_single_lamp():
     for band in BANDS:
         print(f"{band}: {accumulated[band]:.2f} J/m2")
 
+# simulate 1 hour with independent band control, each band calculates its own duty factor
 def simulate_independent_leds():
     rows, duties_by_band = simulate_independent_leds_slot(0, TARGETS_J_PER_HOUR, CAPS_J_PER_HOUR)
 
@@ -225,10 +234,13 @@ def simulate_independent_leds():
             avg_u = 0.0
         print(f"{band}: avg u = {avg_u:.6f} ({pct(avg_u):.3f}%)")
 
+# simulate across multiple hourly slots, for each slot we run: 
+# single full-spectrum lamp control, 
+# independent LED control open-loop, and
+# closed-loop independent LED control closed-loop
 def simulate_target_by_slot(targets_by_slot: list[dict], caps_j_per_hour: dict):
     MJ_to_J = 1000000
-    #takes build_target_slots() output, simulates both models and returns all rows for
-    # single lamp and independent led control across every slot
+    
     all_rows = []
 
     for slot_data in targets_by_slot:
@@ -251,7 +263,7 @@ def simulate_target_by_slot(targets_by_slot: list[dict], caps_j_per_hour: dict):
         all_rows.extend(rows_independent)
         all_rows.extend(rows_closed_loop)
     return all_rows
-
+# simulate closed loop control with independent leds for 1 hour
 def simulate_closed_loop_independent_leds_slot(
         slot: int,
         target_j: dict,

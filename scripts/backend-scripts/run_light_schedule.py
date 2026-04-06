@@ -285,7 +285,7 @@ def mqtt_publish_n_wait_ack(zone:str, payload:dict, timeout_s: int = 5):
     client.loop_start()
 
     client.publish(cmd_topic, json.dumps(payload))
-    LOGGER.info(f"[MQTT] connected to MQTT broker at {MQTT_HOST}:{MQTT_PORT}, Subscribed to {ack_topic}, Publishing to {cmd_topic}, with payload: {payload}")
+    LOGGER.info(f"[MQTT] connected to MQTT broker at {MQTT_HOST}:{MQTT_PORT}, Subscribed to {ack_topic}, Publishing to {cmd_topic}")
 
     #wait for ack or timeout (no reply)
     deadline = time.time() +timeout_s

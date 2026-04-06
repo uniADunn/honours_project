@@ -74,8 +74,8 @@ MYSQL_DB = os.getenv("MYSQL_DB", "crop_lighting")
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 
-RUN_MODE = "SIMULATION" # SIMULATION or REAL
-SIM_SCALE_MODE = True # if true, scales the reference profile down to be achievable by the lamps, if false, uses the raw target values (which may be unachievable)
+RUN_MODE = "REAL" # SIMULATION or REAL
+SIM_SCALE_MODE = False # if true, scales the reference profile down to be achievable by the lamps, if false, uses the raw target values (which may be unachievable)
 CAPS_J_PER_HOUR = {
     "blue": 728357.7226,
     "green": 422294.8749,

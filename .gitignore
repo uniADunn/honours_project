@@ -4,7 +4,6 @@ data/
 venv/
 __pycache__/
 *.pyc
-*.bat
 *.log
 logs/incoming_sensor_payload.log
 logs/*.lock

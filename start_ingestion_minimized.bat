@@ -1,5 +1,6 @@
 @echo off
-set "PROJECT_DIR=C:\Users\ad731\Desktop\crop_lighting\honours_project"
+REM UPDATE THIS PATH TO MATCH YOUR LOCAL PROJECT LOCATION
+set "PROJECT_DIR=C:\your\path\to\your\honours_project"
 
 REM Optional: small delay so networking/NetBird can come up
 timeout /t 10 /nobreak >nul

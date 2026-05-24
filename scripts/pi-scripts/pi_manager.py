@@ -73,10 +73,10 @@ BROKER_USER = os.getenv("MQTT_USER")
 BROKER_PASSWORD = os.getenv("MQTT_PASSWORD")
 
 # MQTT TOPICS
-DATA_TOPIC = "adunn/sensor/light/zone1"
-CMD_TOPIC = "adunn/control/zone1/cmd"
-ACK_TOPIC = "adunn/control/zone1/ack"
-DECISION_TOPIC = "adunn/control/zone1/decision"
+DATA_TOPIC = os.getenv('MQTT_DATA_TOPIC', 'your/sensor/light/zone1')
+CMD_TOPIC = os.getenv('MQTT_CMD_TOPIC', 'your/control/zone1/cmd')
+ACK_TOPIC = os.getenv('MQTT_ACK_TOPIC', 'your/control/zone1/ack')
+DECISION_TOPIC = os.getenv('MQTT_DECISION_TOPIC', 'your/control/zone1/decision')
 #SENSOR / CONTROL CONFIGURATION
 SOURCE = "pi-01"
 ZONE = "ZONE1"

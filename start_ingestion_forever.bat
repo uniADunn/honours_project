@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
-
-set "PROJECT_DIR=C:\Users\ad731\Desktop\crop_lighting\honours_project"
+REM UPDATE THIS PATH TO MATCH YOUR LOCAL PROJECT LOCATION
+set "PROJECT_DIR=C:\your\path\to\your\honours_project"
 set "PYTHON=%PROJECT_DIR%\.venv\Scripts\python.exe"
 set "SCRIPT=%PROJECT_DIR%\scripts\backend-scripts\incoming_sensor_payload.py"
 set "PYTHONPATH=%PROJECT_DIR%"
